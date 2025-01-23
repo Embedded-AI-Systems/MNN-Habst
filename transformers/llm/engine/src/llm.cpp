@@ -234,16 +234,11 @@ int file_size_m(const std::string& filename) {
 }
 
 void Llm::init_runtime() {
-    ScheduleConfig config;
     BackendConfig cpuBackendConfig;
-    config.type      = backend_type_convert(config_->backend_type());
-    config.numThread = config_->thread_num();
-    ExecutorScope::Current()->setGlobalExecutorConfig(config.type, cpuBackendConfig, config.numThread);
-    if (config_->power() == "high") {
-        cpuBackendConfig.power = BackendConfig::Power_High;
-    } else if (config_->power() == "low") {
-        cpuBackendConfig.power = BackendConfig::Power_Low;
-    }
+    // setup prefill config
+    prefill_config.type      = backend_type_convert(config_->backend_type());
+    prefill_config.numThread = config_->thread_num();
+    ExecutorScope::Current()->setGlobalExecutorConfig(prefill_config.type, cpuBackendConfig, prefill_config.numThread);
     if (config_->memory() == "high") {
         cpuBackendConfig.memory = BackendConfig::Memory_High;
     } else if (config_->memory() == "low") {
@@ -254,9 +249,14 @@ void Llm::init_runtime() {
     } else if (config_->precision() == "low") {
         cpuBackendConfig.precision = BackendConfig::Precision_Low;
     }
-    config.backendConfig = &cpuBackendConfig;
+    cpuBackendConfig.power = BackendConfig::Power_High;
+    prefill_config.backendConfig = new BackendConfig(cpuBackendConfig);
+    // set up decode_config
+    decode_config = prefill_config;
+    decode_config.backendConfig = new BackendConfig(cpuBackendConfig);
+    decode_config.numThread = 2;
 
-    runtime_manager_.reset(Executor::RuntimeManager::createRuntimeManager(config));
+    runtime_manager_.reset(Executor::RuntimeManager::createRuntimeManager(prefill_config));
     runtime_manager_->setHint(MNN::Interpreter::MEM_ALLOCATOR_TYPE, 0);
     runtime_manager_->setHint(MNN::Interpreter::QKV_QUANT_OPTIONS, config_->quant_qkv());
     runtime_manager_->setHint(MNN::Interpreter::KVCACHE_SIZE_LIMIT, config_->kvcache_limit());
@@ -322,7 +322,7 @@ void Llm::load() {
     MNN_PRINT("Load Module Done!\n");
     decode_modules_.resize(modules_.size());
     for (int v = 0; v < modules_.size(); ++v) {
-        decode_modules_[v].reset(Module::clone(modules_[v].get()));
+        decode_modules_[v].reset(Module::clone(modules_[v].get(), &decode_config));
     }
     MNN_PRINT("Clone Decode Module Done!\n");
 
@@ -379,15 +379,15 @@ bool Llm::select_module(size_t index) {
 }
 
 void Llm::trace(bool start) {
-    auto status = MNN::Interpreter::Session_Resize_Check;
-    if (start) {
-        status = MNN::Interpreter::Session_Resize_Check;
-    } else {
-        status = MNN::Interpreter::Session_Resize_Fix;
-    }
-    for (auto& m : decode_modules_) {
-        m->traceOrOptimize(status);
-    }
+    // auto status = MNN::Interpreter::Session_Resize_Check;
+    // if (start) {
+    //     status = MNN::Interpreter::Session_Resize_Check;
+    // } else {
+    //     status = MNN::Interpreter::Session_Resize_Fix;
+    // }
+    // for (auto& m : decode_modules_) {
+    //     m->traceOrOptimize(status);
+    // }
 
     runtime_manager_->updateCache();
     mTracing = start;
@@ -433,9 +433,11 @@ void Llm::tuning(TuneType type, std::vector<int> candidates) {
 void Llm::switchMode(Llm::Stage stage) {
     switch (stage) {
         case Prefill:
+            ExecutorScope::Current()->setGlobalExecutorConfig(prefill_config.type, *(prefill_config.backendConfig), prefill_config.numThread);
             current_modules_ = prefill_modules_;
             break;
         case Decode:
+            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
             current_modules_ = decode_modules_;
             break;
         default:
@@ -547,7 +549,7 @@ void Llm::chat() {
     while (true) {
         std::cout << "\nQ: ";
         std::string user_str;
-        std::cin >> user_str;
+        std::getline(std::cin, user_str);
         if (user_str == "/exit") {
             break;
         }
@@ -666,7 +668,7 @@ std::vector<int> Llm::generate(const std::vector<int>& input_ids, int max_tokens
     mState.prompt_len_ = static_cast<int>(input_ids.size());
     mState.history_ids_.insert(mState.history_ids_.end(), input_ids.begin(), input_ids.end()); // push to history_ids_
     auto st          = std::chrono::system_clock::now();
-    current_modules_ = prefill_modules_;
+    switchMode(Llm::Prefill);
     auto logits      = forward(input_ids);
     if (nullptr == logits.get()) {
         return {};
@@ -674,7 +676,7 @@ std::vector<int> Llm::generate(const std::vector<int>& input_ids, int max_tokens
     mState.current_token_ = sample(logits, mState.history_ids_);
     logits = nullptr;
     auto et = std::chrono::system_clock::now();
-    current_modules_ = decode_modules_;
+    switchMode(Llm::Decode);
     mState.prefill_us_ = std::chrono::duration_cast<std::chrono::microseconds>(et - st).count();
     generate(max_tokens);
 
@@ -745,6 +747,8 @@ Llm::~Llm() {
     prefill_modules_.clear();
     modules_.clear();
     runtime_manager_.reset();
+    if (prefill_config.backendConfig != nullptr) delete prefill_config.backendConfig;
+    if (decode_config.backendConfig != nullptr) delete decode_config.backendConfig;
 }
 
 void Llm::print_speed() {

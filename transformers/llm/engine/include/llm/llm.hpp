@@ -113,6 +113,7 @@ protected:
     std::vector<std::shared_ptr<MNN::Express::Module>> prefill_modules_, decode_modules_, current_modules_;
     const MNN::Express::Module* base_module_ = nullptr;
     void init_runtime();
+    ScheduleConfig prefill_config, decode_config;
     virtual MNN::Express::VARP gen_position_ids(int seq_len);
     bool mTracing = false;
     GenerateState mState;
