@@ -21,6 +21,8 @@
 #include "arm/mnn_kleidiai.h"
 #endif
 
+#define MEMORYBOUNDTUNE_START 2
+
 namespace MNN {
 class CPURuntime : public Runtime {
 public:
@@ -29,6 +31,13 @@ public:
         std::shared_ptr<BufferAllocator> mDynamicAllocatorBackup;
         BufferAllocator* mCurrentDynamicAllocator = nullptr;
     };
+    struct CPUTuneInfo {
+        std::vector<std::pair<int, std::vector<int>>> mMemoryBoundTune; // Intermediate schedule
+        std::shared_ptr<std::pair<int, std::vector<int>>> mMemoryBoundTuned; // The tuned schedule
+        bool tune1; // tune1: true, tune2: false.
+        bool executed;
+    };
+    std::vector<int> getTune1Sched(int numThread) const;
     friend class CPUBackend;
     CPURuntime(const Backend::Info& info);
     virtual ~ CPURuntime();
@@ -40,7 +49,7 @@ public:
     virtual CompilerType onGetCompilerType() const override {
         return Compiler_Loop;
     }
-    void onConcurrencyBegin() const;
+    void onConcurrencyBegin();
     void onConcurrencyEnd() const;
     virtual bool onCheckInfo(Backend::Info& info) const override;
 
@@ -52,8 +61,11 @@ public:
     SingleBufferWithAllocator* buffer(int index) const;
     BufferAllocator* createDynamicBufferAlloctor(int index) const;
 
+protected:
+    struct CPUTuneInfo mTuneLws; // TODO: add synchronization with the external memory cache.
+
 private:
-    void _bindCPUCore() const;
+    void _bindCPUCore();
     void _resetThreadPool();
     mutable std::shared_ptr<EagerBufferAllocator> mStaticAllocator;
     int mThreadNumber;

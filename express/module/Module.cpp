@@ -265,7 +265,6 @@ public:
         return this->cloneBaseTo(ctx, module);
     }
     virtual Module* clone(CloneContext* ctx, const ScheduleConfig* config) const override {
-        MNN_PRINT("New clone!!\n");
         auto mModule = mChildren[0];
         auto origin = mInfo->runTimeManager->getInside();
         std::shared_ptr<Executor::RuntimeManager> newRt (Executor::RuntimeManager::createRuntimeManager(*config));

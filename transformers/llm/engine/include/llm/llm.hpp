@@ -33,6 +33,8 @@ class DiskEmbedding;
 enum TuneType {
     // op encoder number for commit
     OP_ENCODER_NUMBER = 0,
+    PREFILL_BACKEND,
+    DECODE_CONFIG
 };
 struct KVMeta;
 class MNN_PUBLIC Llm {

@@ -76,7 +76,7 @@ void CPUBackend::computeDivideSizes(int size, int* dst, float avgDiv) const {
     }
 }
 
-void CPURuntime::_bindCPUCore() const {
+void CPURuntime::_bindCPUCore() {
     if (mPower == BackendConfig::Power_Normal) {
         return;
     }
@@ -112,6 +112,31 @@ void CPURuntime::_bindCPUCore() const {
             }
         }
             break;
+        // MemoryBoundTune Binding Begin 
+        case BackendConfig::Power_MemoryBoundTune1:
+        case BackendConfig::Power_MemoryBoundTune2:
+        {
+            mTuneLws.executed = true; // executed.
+            // get the mTuneLws.mMemoryBoundTune.back() as the current tune plan.
+            auto coreMap = mTuneLws.mMemoryBoundTune.back().second;
+            for (int v=0; v<mThreadNumber; ++v) {
+                lockCPUIndexes[v] = std::make_pair(cpuInfo->groups[coreMap[v]].ids.data(), cpuInfo->groups[coreMap[v]].ids.size());
+            }
+            break;
+        }
+            break;
+        case BackendConfig::Power_MemoryBound:
+        {
+            // get mTuneLws.mMemoryBoundTuned as the tuned plan.
+            auto coreMap = (mTuneLws.mMemoryBoundTuned.get()==nullptr) \
+                                ? (getTune1Sched(MEMORYBOUNDTUNE_START)) \
+                                : (mTuneLws.mMemoryBoundTuned->second);
+            for (int v=0; v<mThreadNumber; ++v) {
+                lockCPUIndexes[v] = std::make_pair(cpuInfo->groups[coreMap[v]].ids.data(), cpuInfo->groups[coreMap[v]].ids.size());
+            }
+        }
+            break;
+        // MemoryBoundTune Binding End
         default:
             break;
     }
@@ -134,14 +159,96 @@ void CPURuntime::_bindCPUCore() const {
 #endif
 }
 
+/* 
+ * tune_list: list of thread affinity (i.e., group id for each thread). 
+ */
+std::vector<int> CPURuntime::getTune1Sched(int numThread) const {
+    std::vector<int> tune_list;
+    auto cpuInfo = MNNGetCPUInfo();
+    auto& groups = cpuInfo->groups;
+    // Assign in a greedy order of CPU performance.
+    for (int i=groups.size()-1; i>=0; --i) {
+        if (tune_list.size()==numThread) { break; }
+        for (int j=0; (j<groups[i].ids.size()) && (tune_list.size()<numThread); ++j) { 
+            tune_list.push_back(i); // push back group id
+        }
+    }
+    // Debug print
+    MNN_PRINT("[CPU Debug] Tune1: \n");
+    for (auto& id: tune_list) { MNN_PRINT("%d ", id); }
+    MNN_PRINT("\n");
+    // Debug end
+    return tune_list;
+}
+
+int getMajorCPUNumber(const std::vector<CPUGroup>& groups) {
+    int sum = 0;
+    for (const auto& g: groups) {
+        if (g.cpuType != CPUGroup::Efficient) { sum+=g.ids.size(); }
+    }
+    return sum;
+}
+
 void CPURuntime::_resetThreadPool() {
     mThreadNumber = std::max(1, mThreadNumber);
     mThreadNumber = std::min(mThreadNumber, MAX_THREAD_NUMBER);
 #ifdef MNN_USE_THREAD_POOL
     ThreadPool::releaseWorkIndex(mTaskIndex);
     auto cpuInfo = MNNGetCPUInfo();
+    int systemThreadNumber = (int)cpuInfo->cpuNumber;
+    // MemoryBoundTune1
+    if (systemThreadNumber > 1) {
+        if (mPower == BackendConfig::Power_MemoryBoundTune1) {
+            // 1. initialize next tuning plan
+            mTuneLws.tune1 = true;
+            if (mTuneLws.mMemoryBoundTune.empty()) {
+                // initial assignments
+                mTuneLws.mMemoryBoundTune.push_back(std::make_pair(MEMORYBOUNDTUNE_START, getTune1Sched(MEMORYBOUNDTUNE_START)));
+            } else {
+                int majorCPUNumber = getMajorCPUNumber(cpuInfo->groups); // Prime + Performance
+                // If executed, next plan. If not executed, remain the last one. 
+                if (mTuneLws.executed) {
+                    if (mTuneLws.mMemoryBoundTune.back().first < majorCPUNumber) {
+                        // normal case: add 1 more core greedily and tune.
+                        auto& tune_case = mTuneLws.mMemoryBoundTune.back();
+                        mTuneLws.mMemoryBoundTune.push_back(std::make_pair(tune_case.first+1, getTune1Sched(tune_case.first+1)));
+                    } else {
+                        // last case: no more major cores available, copy the last plan and tune.
+                        auto& tune_case = mTuneLws.mMemoryBoundTune.back();
+                        mTuneLws.mMemoryBoundTune.push_back(std::make_pair(tune_case.first, getTune1Sched(tune_case.first)));
+                    }
+                }
+            }
+            // The current tuning plan is mTuneLws.mMemoryBoundTune.back()
+            mThreadNumber = mTuneLws.mMemoryBoundTune.back().first;
+            mTuneLws.executed = false; // not executed.
+        }
+        if (mPower == BackendConfig::Power_MemoryBoundTune2) {
+            MNN_ERROR("Not implemented yet!\n");
+            mTuneLws.tune1 = false; // tune2.
+
+            // The current tuning plan is mTuneLws.mMemoryBoundTune.back()
+            mThreadNumber = mTuneLws.mMemoryBoundTune.back().first;
+            mTuneLws.executed = false; // not executed.
+        }
+        if (mPower == BackendConfig::Power_MemoryBound) {
+            if (mTuneLws.mMemoryBoundTuned.get() == nullptr) {
+                if (!mTuneLws.mMemoryBoundTune.empty()) {
+                    if (mTuneLws.mMemoryBoundTune.size() == 1) { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune.back())); }
+                    else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(*(mTuneLws.mMemoryBoundTune.end()-2))); } // second last one. (based on the bitonic assumption.)
+                    mTuneLws.mMemoryBoundTune.clear(); // clear last tuning intermediate results.
+                    // Debug print
+                    MNN_PRINT("[CPU Debug] Memory Bound Core Plan: \n");
+                    for (const auto& id: mTuneLws.mMemoryBoundTuned->second) { MNN_PRINT("%d ", id); }
+                    MNN_PRINT("\n");
+                    // Debug end
+                }
+            }
+            if (mTuneLws.mMemoryBoundTuned.get() != nullptr) { mThreadNumber = mTuneLws.mMemoryBoundTuned->first; }
+            else mThreadNumber = MEMORYBOUNDTUNE_START;
+        }
+    }
     if (mThreadNumber > 1) {
-        int systemThreadNumber = (int)cpuInfo->cpuNumber;
         if (systemThreadNumber == 0) {
             systemThreadNumber = mThreadNumber;
         }
@@ -328,7 +435,7 @@ void CPURuntime::onGabageCollect(int level) {
 }
 
 
-void CPURuntime::onConcurrencyBegin() const {
+void CPURuntime::onConcurrencyBegin() {
 #ifdef MNN_USE_THREAD_POOL
     if (mTaskIndex >= 0) {
         ThreadPool::active(mThreadNumber);

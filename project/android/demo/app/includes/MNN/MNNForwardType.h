@@ -54,7 +54,10 @@ struct BackendConfig {
     enum PowerMode {
         Power_Normal = 0,
         Power_High,
-        Power_Low
+        Power_Low,
+        Power_MemoryBoundTune1, 
+        Power_MemoryBoundTune2, 
+        Power_MemoryBound
     };
     
     PowerMode power = Power_Normal;

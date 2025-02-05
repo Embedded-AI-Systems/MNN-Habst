@@ -254,7 +254,7 @@ void Llm::init_runtime() {
     // set up decode_config
     decode_config = prefill_config;
     decode_config.backendConfig = new BackendConfig(cpuBackendConfig);
-    decode_config.numThread = 2;
+    decode_config.backendConfig->power = BackendConfig::Power_MemoryBound;
 
     runtime_manager_.reset(Executor::RuntimeManager::createRuntimeManager(prefill_config));
     runtime_manager_->setHint(MNN::Interpreter::MEM_ALLOCATOR_TYPE, 0);
@@ -394,6 +394,58 @@ void Llm::trace(bool start) {
 }
 
 void Llm::tuning(TuneType type, std::vector<int> candidates) {
+    // prefill backend tuning
+    // decode backend tuning
+    if (decode_config.type == MNN_FORWARD_CPU \
+        && decode_config.backendConfig->power == BackendConfig::Power_MemoryBound) {
+        auto tuneConfig = decode_config;
+        tuneConfig.backendConfig = new BackendConfig(*(decode_config.backendConfig));
+
+        // tune 1 for speed.
+        tuneConfig.backendConfig->power = BackendConfig::Power_MemoryBoundTune1;
+        int64_t last_time = INT64_MAX;
+        int64_t current_time = 0;
+        std::vector<int> test_prompt(30, 200);
+        for (int times=0; times<5; ++times) {
+            switchMode(Llm::Prefill);
+            auto logits = forward(test_prompt); // prefill a prompt of length length.
+            auto res = logits->readMap<float>()[0];
+            mMeta->add = 1;
+            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
+            for (int v = 0; v < decode_modules_.size(); ++v) {
+                decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
+            }
+            current_modules_ = decode_modules_;
+            for (int t=0; t<10; ++t){
+                auto st     = std::chrono::system_clock::now();
+                auto logits = forward({200});
+                res = logits->readMap<float>()[0];
+                auto et      = std::chrono::system_clock::now();
+                current_time += std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
+            }
+            MNN_PRINT("Current Time: %.1fms\n", (float)current_time/10);
+            if (current_time >= last_time) {
+                break;
+            }
+            last_time = current_time;
+            current_time = 0;
+            // clear dirty tuning kv history
+            setKVCacheInfo(0, getCurrentHistory());
+            reset();
+        }
+
+        // tune 2 for energy
+        // TODO: finish tune 2 here.
+
+        // tuning finished, reset decode_modules_ to Power_MemoryBound.
+        ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
+        for (int v = 0; v < decode_modules_.size(); ++v) {
+            decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
+        }
+        delete tuneConfig.backendConfig;
+    }
+
+    // metal tuning
     if (type != OP_ENCODER_NUMBER) {
         MNN_ERROR("tuning type not supported\n");
         return;
