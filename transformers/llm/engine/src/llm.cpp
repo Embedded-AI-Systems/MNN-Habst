@@ -22,6 +22,10 @@
 #define DEBUG_MODE 0
 //#define DEBUG_IMAGE
 
+#define DECODE_TUNE_TIMES 10
+#define DECODE_TUNE1_PLANS 6
+#define DECODE_TUNE2_PLANS 6
+
 #include "httplib.h"
 #ifdef LLM_SUPPORT_VISION
 #include <cv/cv.hpp>
@@ -406,7 +410,7 @@ void Llm::tuning(TuneType type, std::vector<int> candidates) {
         int64_t last_time = INT64_MAX;
         int64_t current_time = 0;
         std::vector<int> test_prompt(30, 200);
-        for (int times=0; times<5; ++times) {
+        for (int times=0; times<DECODE_TUNE1_PLANS; ++times) {
             switchMode(Llm::Prefill);
             auto logits = forward(test_prompt); // prefill a prompt of length length.
             auto res = logits->readMap<float>()[0];
@@ -416,14 +420,14 @@ void Llm::tuning(TuneType type, std::vector<int> candidates) {
                 decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
             }
             current_modules_ = decode_modules_;
-            for (int t=0; t<10; ++t){
+            for (int t=0; t<DECODE_TUNE_TIMES; ++t){
                 auto st     = std::chrono::system_clock::now();
                 auto logits = forward({200});
                 res = logits->readMap<float>()[0];
                 auto et      = std::chrono::system_clock::now();
                 current_time += std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
             }
-            MNN_PRINT("Current Time: %.1fms\n", (float)current_time/10);
+            MNN_PRINT("Current Time: %.1fms\n", (float)current_time/DECODE_TUNE_TIMES);
             if (current_time >= last_time) {
                 break;
             }
