@@ -66,7 +66,7 @@ public:
     void chat();
     void reset();
     void trace(bool start);
-    void tuning(TuneType type, std::vector<int> candidates);
+    void tuning(TuneType type, std::vector<int> candidates, int speed_tolerance=5);
     virtual void load();
     void switchMode(Stage stage);
     void setKVCacheInfo(size_t add, size_t remove, int* reserve = nullptr, int n_reserve = 0);

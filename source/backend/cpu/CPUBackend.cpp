@@ -114,11 +114,21 @@ void CPURuntime::_bindCPUCore() {
             break;
         // MemoryBoundTune Binding Begin 
         case BackendConfig::Power_MemoryBoundTune1:
-        case BackendConfig::Power_MemoryBoundTune2:
         {
             mTuneLws.executed = true; // executed.
             // get the mTuneLws.mMemoryBoundTune.back() as the current tune plan.
             auto coreMap = mTuneLws.mMemoryBoundTune.back().second;
+            for (int v=0; v<mThreadNumber; ++v) {
+                lockCPUIndexes[v] = std::make_pair(cpuInfo->groups[coreMap[v]].ids.data(), cpuInfo->groups[coreMap[v]].ids.size());
+            }
+            break;
+        }
+            break;
+        case BackendConfig::Power_MemoryBoundTune2:
+        {
+            mTuneLws.executed = true; // executed.
+            // get the mTuneLws.mMemoryBoundTune.back() as the current tune plan.
+            auto coreMap = mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second;
             for (int v=0; v<mThreadNumber; ++v) {
                 lockCPUIndexes[v] = std::make_pair(cpuInfo->groups[coreMap[v]].ids.data(), cpuInfo->groups[coreMap[v]].ids.size());
             }
@@ -177,6 +187,7 @@ std::vector<int> CPURuntime::getTune1Sched(int numThread) const {
     MNN_PRINT("[CPU Debug] Tune1: \n");
     for (auto& id: tune_list) { MNN_PRINT("%d ", id); }
     MNN_PRINT("\n");
+    MNN_PRINT("extimated power: %.5f\n", estimatePower(tune_list));
     // Debug end
     return tune_list;
 }
@@ -188,6 +199,157 @@ int getMajorCPUNumber(const std::vector<CPUGroup>& groups) {
     }
     return sum;
 }
+
+float CPURuntime::estimatePower(const std::vector<int>& config) const {
+    float sum = 0.;
+    auto cpuInfo = MNNGetCPUInfo();
+    auto& groups = cpuInfo->groups;
+    std::vector<int> groupSelect(groups.size(), 0);
+    std::vector<int> groupSize(groups.size(), 0);
+    auto maxFreq = groups.back().maxFreq;
+    auto selectedMaxFreq = groups.front().maxFreq;
+    for (auto id : config) {
+        groupSelect[id]++; 
+        selectedMaxFreq=std::max(selectedMaxFreq, groups[id].maxFreq);
+    }
+    for (int i=0; i<groups.size(); ++i) { groupSize[i]=groups[i].ids.size(); }
+    for (int i=0; i<groups.size(); ++i) {
+        if (groupSelect[i]==0) { continue; }
+        float groupFreq = groups[i].maxFreq * ((float)selectedMaxFreq/maxFreq);
+        groupFreq /= 1000000; // unit: GHz
+        float idleFactor = groupSelect[i] \
+            + ((float)(hint().coreIdleFactor)/100)*(groupSize[i]-groupSelect[i]);
+        float powerFactor = 1.;
+        if (groups[i].cpuType == CPUGroup::Performance) { powerFactor=(float)hint().performanceCorePowerScale/100; }
+        if (groups[i].cpuType == CPUGroup::Efficient) { powerFactor=(float)hint().efficientCorePowerScale/100; }
+        sum += powerFactor * idleFactor * (groupFreq*groupFreq);
+    }
+    return sum;
+}
+
+bool CPURuntime::compareConfigPower(const std::vector<int>& config1, const std::vector<int>& config2) const {
+    // return if P(config1) <= P(config2)
+    return (estimatePower(config1) <= estimatePower(config2));
+}
+
+void CPURuntime::reduceTune2Core(const std::vector<int>& base, std::vector<std::vector<int>>& branch) {
+    // tier1 only
+    if (base.size() > MEMORYBOUNDTUNE_START) {
+        branch.push_back(base);
+        branch.back().pop_back(); // remove the last core
+    }
+}
+
+void CPURuntime::changeTune2Core(const std::vector<int>& base, std::vector<std::vector<int>>& branch) {
+    auto cpuInfo = MNNGetCPUInfo();
+    auto& groups = cpuInfo->groups;
+    std::vector<int> groupSelect(groups.size(), 0);
+    for (auto id : base) { groupSelect[id]++; }
+    std::vector<int> new_config;
+    for (int i=base.size()-1; i>=0; --i) {
+        for (int j=base[i]-1; j>=0; --j) {
+            // find a smaller group that has idle core
+            if (groups[j].cpuType==CPUGroup::Efficient) { continue; }
+            if (groupSelect[j]>0 && groupSelect[j]<groups[j].ids.size()) {
+                // not opening a new group
+                new_config=base;
+                new_config[i]=j;
+                break;
+            }
+        }
+        if (!new_config.empty()) { break; }
+    }
+    // tier1/tier2 both ok.
+    if (!new_config.empty()) { branch.insert(branch.begin(), new_config); }
+}
+
+void CPURuntime::changeTune2Group(const std::vector<int>& base, std::vector<std::vector<int>>& branch) {
+    auto cpuInfo = MNNGetCPUInfo();
+    auto& groups = cpuInfo->groups;
+    std::vector<int> groupSelect(groups.size(), 0);
+    for (auto id : base) { groupSelect[id]++; }
+    std::vector<int> new_config;
+    for (int i=base.size()-1; i>=0; --i) {
+        for (int j=base[i]-1; j>=0; --j) {
+            // find an idle smaller group
+            if (groups[j].cpuType==CPUGroup::Efficient) { continue; }
+            if (groupSelect[j]==0 \
+                    && groupSelect[base[i]]<=groups[j].ids.size() \
+                    && groups[j].ids.size()<=groups[base[i]].ids.size()+1) {
+                // closing the original group, opening up the new group, and accomodate the new group.
+                new_config=base;
+                for (auto& id:new_config) { if(id==base[i]) { id=j; } }
+                if (compareConfigPower(new_config, base)) { break; } // found
+                else { new_config.clear(); } // not valid! new_config is evaluated to consume more power!
+            }
+        }
+        if (!new_config.empty()) { break; }
+    }
+    // insert new_config and maintain power order.
+    if (!new_config.empty()) {
+        if (branch.empty()) {
+            // tier 1 directly push back
+            branch.push_back(new_config);
+        } else {
+            // tier 2, compare with the front.
+            if (compareConfigPower(new_config, branch.front())) {
+                branch.insert(branch.begin(), new_config);
+            } else {
+                branch.insert(branch.begin()+1, new_config);
+            }
+        }
+    }
+}
+
+std::vector<std::vector<int>> CPURuntime::mergeSortTune2Config(const std::vector<std::vector<int>>& branch1,
+                                                               const std::vector<std::vector<int>>& branch2) const {
+    std::vector<std::vector<int>> result;
+    auto it1=branch1.begin();
+    auto it2=branch2.begin();
+    while (it1!=branch1.end() && it2!=branch2.end()) {
+        if (compareConfigPower(*it1, *it2)) { result.push_back(*(it1++)); } 
+        else { result.push_back(*(it2++)); }
+    }
+    // insert the possible remaining
+    result.insert(result.end(), it1, branch1.end());
+    result.insert(result.end(), it2, branch2.end());
+    return result;
+}
+
+void CPURuntime::getTune2Sched(std::vector<int> tune1_list) {
+    // the sched is directly stored in mTuneLws.mMemoryBoundTune
+    // tier 1 reduce core
+    std::vector<std::vector<int>> branch1;
+    reduceTune2Core(tune1_list, branch1);
+    if (!branch1.empty()) { 
+        changeTune2Core(branch1.back(), branch1);
+        changeTune2Group(branch1.back(), branch1);
+    }
+    // tier 1 big -> small (no new group)
+    std::vector<std::vector<int>> branch2;
+    changeTune2Core(tune1_list, branch2);
+    if (!branch2.empty()) {
+        changeTune2Core(branch2.back(), branch2);
+        changeTune2Group(branch2.back(), branch2);
+    }
+    // tier 1 big group -> small group
+    std::vector<std::vector<int>> branch3;
+    changeTune2Group(tune1_list, branch3);
+    if (!branch3.empty()) {
+        changeTune2Core(branch3.back(), branch3);
+        changeTune2Group(branch3.back(), branch3);
+    }
+    // merge 3 branches, generate mTuneLws.mMemoryBoundTune
+    std::vector<std::vector<int>> mergedTree;
+    mergedTree = mergeSortTune2Config(branch1, branch2);
+    mergedTree = mergeSortTune2Config(mergedTree, branch3);
+    mTuneLws.mMemoryBoundTune.clear();
+    for (auto& config: mergedTree) {
+        mTuneLws.mMemoryBoundTune.push_back(std::make_pair(config.size(), config));
+    }
+    // push back the root.
+    mTuneLws.mMemoryBoundTune.push_back(std::make_pair(tune1_list.size(), tune1_list));
+} 
 
 void CPURuntime::_resetThreadPool() {
     mThreadNumber = std::max(1, mThreadNumber);
@@ -224,18 +386,49 @@ void CPURuntime::_resetThreadPool() {
             mTuneLws.executed = false; // not executed.
         }
         if (mPower == BackendConfig::Power_MemoryBoundTune2) {
-            MNN_ERROR("Not implemented yet!\n");
-            mTuneLws.tune1 = false; // tune2.
+            if (mTuneLws.mMemoryBoundTune.empty()) {
+                MNN_ERROR("Error: Tune1 hasn't performed yet!\n");
+            }
 
-            // The current tuning plan is mTuneLws.mMemoryBoundTune.back()
-            mThreadNumber = mTuneLws.mMemoryBoundTune.back().first;
+            if (mTuneLws.tune1) {
+                // first time tuned, generate candidate schedules.
+                mTuneLws.tune1 = false; // tune2.
+                // the tune2 root is the tune1 result.
+                auto& root = (mTuneLws.mMemoryBoundTune.size()==1) \
+                            ? mTuneLws.mMemoryBoundTune.back().second \
+                            : (mTuneLws.mMemoryBoundTune.end()-2)->second;
+                getTune2Sched(root); // generate new mMemoryBoundTune2.
+                mTuneLws.currentTunePlan = 0;
+            } else {
+                // iterate to the next config
+                if (mTuneLws.executed) {
+                    if (mTuneLws.currentTunePlan != mTuneLws.mMemoryBoundTune.size()-1) { 
+                        mTuneLws.currentTunePlan++; 
+                    } 
+                }
+            }
+
+            // Debug print
+            if (mTuneLws.currentTunePlan==0 || mTuneLws.executed) {
+                MNN_PRINT("[CPU Debug] Tune2: \n");
+                for (auto& id: mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second) { MNN_PRINT("%d ", id); }
+                MNN_PRINT("\n");
+                MNN_PRINT("extimated power: %.5f\n", estimatePower(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second));
+            }
+            // Debug end
+
+            // The current tuning plan is mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan]
+            mThreadNumber = mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].first;
             mTuneLws.executed = false; // not executed.
         }
         if (mPower == BackendConfig::Power_MemoryBound) {
             if (mTuneLws.mMemoryBoundTuned.get() == nullptr) {
                 if (!mTuneLws.mMemoryBoundTune.empty()) {
                     if (mTuneLws.mMemoryBoundTune.size() == 1) { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune.back())); }
-                    else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(*(mTuneLws.mMemoryBoundTune.end()-2))); } // second last one. (based on the bitonic assumption.)
+                    else { 
+                        if (mTuneLws.tune1) { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(*(mTuneLws.mMemoryBoundTune.end()-2))); } // tune1: terminater with the previous peaked one.
+                        else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan])); } // tune2: terminate with the current first satisfying one.
+                    } // second last one. (based on the bitonic assumption.)
                     mTuneLws.mMemoryBoundTune.clear(); // clear last tuning intermediate results.
                     // Debug print
                     MNN_PRINT("[CPU Debug] Memory Bound Core Plan: \n");

@@ -32,6 +32,12 @@ struct RuntimeHint {
 
     // 0-100, 50 means litter core has 50% capacity of large core
     int cpuDecreaseRate = 50;
+    // power
+    int coreIdleFactor = 70; // if a core is idle, the power is 70%
+    int performanceCorePowerScale = 80; // the performance core power scales 80% of prime core
+    int efficientCorePowerScale = 40; // the efficient core power scales 40% of prime core
+
+    // activation quant
     int dynamicQuantOption = 0;
 
     // 0: Do not quantize

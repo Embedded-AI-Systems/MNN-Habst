@@ -36,6 +36,7 @@ public:
         std::shared_ptr<std::pair<int, std::vector<int>>> mMemoryBoundTuned; // The tuned schedule
         bool tune1; // tune1: true, tune2: false.
         bool executed;
+        int currentTunePlan;
     };
     std::vector<int> getTune1Sched(int numThread) const;
     friend class CPUBackend;
@@ -65,6 +66,14 @@ protected:
     struct CPUTuneInfo mTuneLws; // TODO: add synchronization with the external memory cache.
 
 private:
+    float estimatePower(const std::vector<int>& config) const;
+    bool compareConfigPower(const std::vector<int>& config1, const std::vector<int>& config2) const;
+    void reduceTune2Core(const std::vector<int>& base, std::vector<std::vector<int>>& branch);
+    void changeTune2Core(const std::vector<int>& base, std::vector<std::vector<int>>& branch);
+    void changeTune2Group(const std::vector<int>& base, std::vector<std::vector<int>>& branch);
+    std::vector<std::vector<int>> mergeSortTune2Config(const std::vector<std::vector<int>>& branch1,
+                                                       const std::vector<std::vector<int>>& branch2) const ;
+    void getTune2Sched(std::vector<int> tune1_list);
     void _bindCPUCore();
     void _resetThreadPool();
     mutable std::shared_ptr<EagerBufferAllocator> mStaticAllocator;
