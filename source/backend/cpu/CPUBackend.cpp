@@ -352,6 +352,7 @@ void CPURuntime::getTune2Sched(std::vector<int> tune1_list) {
 } 
 
 void CPURuntime::_resetThreadPool() {
+    if (mThreadNumber <= 0) { mThreadNumber=getMajorCPUNumber(MNNGetCPUInfo()->groups); }
     mThreadNumber = std::max(1, mThreadNumber);
     mThreadNumber = std::min(mThreadNumber, MAX_THREAD_NUMBER);
 #ifdef MNN_USE_THREAD_POOL

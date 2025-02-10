@@ -189,6 +189,7 @@ int main(int argc, const char* argv[]) {
     std::cout << "config path is " << config_path << std::endl;
     std::unique_ptr<Llm> llm(Llm::createLLM(config_path));
     llm->set_config("{\"tmp_path\":\"tmp\"}");
+    llm->set_config("{\"thread_num\": 0}");
     {
         AUTOTIME;
         llm->load();
