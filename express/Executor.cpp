@@ -230,6 +230,14 @@ void Executor::RuntimeManager::setHint(Interpreter::HintMode mode, int value) {
         iter.second->setRuntimeHint(mInside->mContent->modes.runtimeHint);
     }
 }
+void Executor::RuntimeManager::setHint(Interpreter::HintMode mode, const std::vector<int>& value) {
+    mInside->mContent->modes.setHint(mode, value);
+    auto current = ExecutorScope::Current();
+    auto rt = current->getRuntime();
+    for (auto& iter : rt.first) {
+        iter.second->setRuntimeHint(mInside->mContent->modes.runtimeHint);
+    }
+}
 void Executor::RuntimeManager::setExternalPath(std::string path, int type) {
     mInside->mContent->modes.setExternalPath(path, type);
 }
@@ -239,6 +247,19 @@ void Executor::RuntimeManager::setHintPtr(Interpreter::HintMode mode, void* valu
     for (auto& iter : rt.first) {
         iter.second->pMeta = value;
     }
+}
+
+std::vector<int> Executor::RuntimeManager::getCPUCoreConfig() {
+    auto current = ExecutorScope::Current();
+    auto rt = current->getRuntime();
+    for (auto& iter : rt.first) {
+        if (iter.first == MNN_FORWARD_CPU) {
+            const auto& cpu_config = iter.second->hint().cpuCoreConfig;
+            if (!cpu_config.empty()) { return cpu_config; }
+        }
+    }
+    std::vector<int> emptyVec;
+    return emptyVec;
 }
 
 bool Executor::RuntimeManager::getInfo(Interpreter::SessionInfoCode code, void* ptr) {

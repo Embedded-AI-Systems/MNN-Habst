@@ -17,6 +17,7 @@
 #include "BufferAllocator.hpp"
 #include <future>
 #include <atomic>
+#include <vector>
 
 namespace MNN {
 
@@ -63,6 +64,12 @@ struct RuntimeHint {
 
     // op encoder number for once commit
     int encorderNumForCommit = 10;
+
+    // tuning hint: cpu energy
+    float cpuEnergy = 0.0f; // mJ
+
+    // CPU core config
+    std::vector<int> cpuCoreConfig;
 };
 /** abstract backend */
 class Backend : public NonCopyable {
@@ -357,6 +364,7 @@ public:
     void* pMeta;
 private:
     std::future<int> mFuture;
+protected:
     RuntimeHint mHint;
 };
 

@@ -110,6 +110,24 @@ void Session::ModeGroup::setHint(Interpreter::HintMode mode, int hint) {
             break;
     }
 }
+void Session::ModeGroup::setHint(Interpreter::HintMode mode, float hint) {
+    switch (mode) {
+        case Interpreter::CPU_MEMORYBOUND_ENERGY:
+            runtimeHint.cpuEnergy = hint;
+            break;
+        default:
+            break;
+    }
+}
+void Session::ModeGroup::setHint(Interpreter::HintMode mode, const std::vector<int>& hint) {
+    switch (mode) {
+        case Interpreter::CPU_MEMORYBOUND_CORE_CONFIG:
+            runtimeHint.cpuCoreConfig = hint;
+            break;
+        default:
+            break;
+    }
+}
 
 void Session::ModeGroup::setExternalPath(std::string path, int type) {
     switch (type) {

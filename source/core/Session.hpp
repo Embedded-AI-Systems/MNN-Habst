@@ -38,6 +38,8 @@ public:
         bool checkNetBuffer = true;
         RuntimeHint runtimeHint;
         void setHint(Interpreter::HintMode hint, int magic);
+        void setHint(Interpreter::HintMode hint, float magic);
+        void setHint(Interpreter::HintMode hint, const std::vector<int>& magic);
         void setMode(Interpreter::SessionMode mode);
         void setExternalPath(std::string path, int type);
     };

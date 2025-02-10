@@ -303,8 +303,8 @@ public:
     }
 
     int thread_num(bool mllm = false) const {
-        if (mllm) return mllm_config_.value("thread_num", 0);
-        return config_.value("thread_num", 0);
+        if (mllm) return mllm_config_.value("thread_num", 4);
+        return config_.value("thread_num", 4);
     }
 
     std::string precision(bool mllm = false) const {

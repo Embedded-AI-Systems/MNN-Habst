@@ -476,6 +476,10 @@ void Llm::tuning(TuneType type, std::vector<int> candidates, int speed_tolerance
         for (int v = 0; v < decode_modules_.size(); ++v) {
             decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
         }
+        auto cpu_cores = runtime_manager_->getCPUCoreConfig();
+        MNN_PRINT("CPU MemoryBound Core Group: ");
+        for (auto& c:cpu_cores) { MNN_PRINT("%d, ", c);  }
+        MNN_PRINT("\n");
         delete tuneConfig.backendConfig;
     }
 

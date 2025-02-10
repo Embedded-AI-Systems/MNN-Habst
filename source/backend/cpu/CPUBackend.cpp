@@ -431,6 +431,7 @@ void CPURuntime::_resetThreadPool() {
                         else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan])); } // tune2: terminate with the current first satisfying one.
                     } // second last one. (based on the bitonic assumption.)
                     mTuneLws.mMemoryBoundTune.clear(); // clear last tuning intermediate results.
+                    mHint.cpuCoreConfig = mTuneLws.mMemoryBoundTuned->second; // update the tuned results to the RuntimeHint.
                     // Debug print
                     MNN_PRINT("[CPU Debug] Memory Bound Core Plan: \n");
                     for (const auto& id: mTuneLws.mMemoryBoundTuned->second) { MNN_PRINT("%d ", id); }

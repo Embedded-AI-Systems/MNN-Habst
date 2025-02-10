@@ -242,7 +242,11 @@ public:
         KVCACHE_INFO = 10,
         // mmap allocate file size, KB
         MMAP_FILE_SIZE = 11,
-        USE_CACHED_MMAP = 12
+        USE_CACHED_MMAP = 12,
+
+        // cpu core config under memory bound mode
+        CPU_MEMORYBOUND_ENERGY = 15,
+        CPU_MEMORYBOUND_CORE_CONFIG = 16
     };
 
     enum ExternalPathType {
