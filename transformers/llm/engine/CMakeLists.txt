@@ -3,12 +3,12 @@ option(LLM_SUPPORT_AUDIO "Llm model support audio input." OFF)
 
 
 if (LLM_SUPPORT_VISION AND MNN_BUILD_OPENCV)
-    include_directories(${CMAKE_SOURCE_DIR}/tools/cv/include/)
+    include_directories(${CMAKE_SOURCE_DIR}/MNN/tools/cv/include/)
 endif()
 
 if (LLM_SUPPORT_AUDIO AND MNN_BUILD_AUDIO)
     list(APPEND MNN_DEPS MNNAudio)
-    include_directories(${CMAKE_SOURCE_DIR}/tools/audio/include/)
+    include_directories(${CMAKE_SOURCE_DIR}/MNN/tools/audio/include/)
 endif()
 
 # include dir

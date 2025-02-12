@@ -461,7 +461,6 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             // direct tuning, not waiting.
             tuneConfig.backendConfig->power = (tune1) ? BackendConfig::Power_MemoryBoundTune1 : BackendConfig::Power_MemoryBoundTune2;
             if (times < tuning_plans) {
-                setKVCacheInfo(1, 0);
                 // tune and measure time.
                 auto st     = std::chrono::system_clock::now();
                 ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
@@ -470,6 +469,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                 }
                 current_modules_ = decode_modules_;
                 for (int t=0; t<tuning_times; ++t){
+                    setKVCacheInfo(1, 0);
                     auto logits = forward({MAGIC_TOKEN});
                     auto res = logits->readMap<float>()[0];
                 }
