@@ -22,9 +22,10 @@
 #define DEBUG_MODE 0
 //#define DEBUG_IMAGE
 
-#define DECODE_TUNE_TIMES 10
-#define DECODE_TUNE1_PLANS 6
+#define DECODE_TUNE1_PLANS 7
 #define DECODE_TUNE2_PLANS 10
+#define FLUCTUATION_TOLERANCE 2
+#define MAGIC_TOKEN 200
 
 #include "httplib.h"
 #ifdef LLM_SUPPORT_VISION
@@ -397,91 +398,142 @@ void Llm::trace(bool start) {
     mTracing = start;
 }
 
-void Llm::tuning(TuneType type, std::vector<int> candidates, int speed_tolerance) {
-    // prefill backend tuning
+bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int speed_tolerance) {
+    const int tune2_skip = 2;
+    static bool tune1 = true;
+    static bool wait_for_power = false;
+    static int times = 0;
+    static float last_speed = 0;
+    static float current_speed = 0;
+    static float tune1_speed = 0;
+    static std::vector<std::pair<float,float>> tune2_list;
+    static int tuning_times = decode_tune_times;
+
+    // Return: tuning end indicator
+    bool tune_end = false;
+    int tuning_plans = (tune1) ? DECODE_TUNE1_PLANS : DECODE_TUNE2_PLANS;
+
     // decode backend tuning
     if (decode_config.type == MNN_FORWARD_CPU \
         && decode_config.backendConfig->power == BackendConfig::Power_MemoryBound) {
         auto tuneConfig = decode_config;
         tuneConfig.backendConfig = new BackendConfig(*(decode_config.backendConfig));
 
-        // tune 1 for speed.
-        tuneConfig.backendConfig->power = BackendConfig::Power_MemoryBoundTune1;
-        int64_t last_time = INT64_MAX;
-        int64_t current_time = 0;
-        std::vector<int> test_prompt(30, 200);
-        for (int times=0; times<DECODE_TUNE1_PLANS; ++times) {
-            switchMode(Llm::Prefill);
-            auto logits = forward(test_prompt); // prefill a prompt of length length.
-            auto res = logits->readMap<float>()[0];
-            mMeta->add = 1;
-            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
-            for (int v = 0; v < decode_modules_.size(); ++v) {
-                decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
+        bool need_tune = true;
+
+        if (wait_for_power) 
+        {
+            // tune2: waiting for power registration
+            if (power == nullptr) {
+                // no power input, use heuristic.
+                if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed || times==tuning_plans) {
+                    tune_end = true; // founded
+                    need_tune = false;
+                }
+            } else {
+                tune2_list.push_back(std::make_pair(current_speed, (*power)*(1/current_speed)));
+                if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed) {
+                    if (tuning_times<decode_tune_times) { tuning_times=decode_tune_times; } // tune2: coarse -> fine.
+                }
+                if ((current_speed >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_speed) \
+                    || (times==tuning_plans)) {
+                    // termination
+                    int best = tune2_list.size()-1;
+                    float best_energy = tune2_list.back().second;
+                    for (int i=0; i<tune2_list.size(); ++i) {
+                        if (tune2_list[i].first < (1-(float)speed_tolerance/100)*tune1_speed) { continue; }
+                        if (tune2_list[i].second < best_energy) {
+                            best_energy = tune2_list[i].second;
+                            best = i;
+                        }
+                    }
+                    runtime_manager_->setHint(Interpreter::CPU_MEMORYBOUND_SEARCH_INDEX, best);
+                    MNN_PRINT("Best energy: %.4f mJ\n", best_energy);
+                    tune_end = true; // terminated
+                }
+                need_tune = false;
             }
-            current_modules_ = decode_modules_;
-            for (int t=0; t<DECODE_TUNE_TIMES; ++t){
+            wait_for_power = false;
+        } 
+        
+        if (need_tune && (!tune_end))
+        {
+            // direct tuning, not waiting.
+            tuneConfig.backendConfig->power = (tune1) ? BackendConfig::Power_MemoryBoundTune1 : BackendConfig::Power_MemoryBoundTune2;
+            if (times < tuning_plans) {
+                setKVCacheInfo(1, 0);
+                // tune and measure time.
                 auto st     = std::chrono::system_clock::now();
-                auto logits = forward({200});
-                res = logits->readMap<float>()[0];
+                ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
+                for (int v = 0; v < decode_modules_.size(); ++v) {
+                    decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
+                }
+                current_modules_ = decode_modules_;
+                for (int t=0; t<tuning_times; ++t){
+                    auto logits = forward({MAGIC_TOKEN});
+                    auto res = logits->readMap<float>()[0];
+                }
                 auto et      = std::chrono::system_clock::now();
-                current_time += std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
+                auto current_time = std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
+                current_speed = (tuning_times/(float)current_time)*1000;
+                MNN_PRINT("Current Speed: %.1f tok/s\n", current_speed);
+                // clear dirty tuning kv history
+                setKVCacheInfo(0, getCurrentHistory());
+                reset();
             }
-            float current_speed = (DECODE_TUNE_TIMES/(float)current_time)*1000;
-            MNN_PRINT("Current Speed: %.1f tok/s\n", current_speed);
-            if (current_time >= last_time) {
-                break;
+            // release dynamic memory
+            delete tuneConfig.backendConfig;
+            // handle tuning
+            if (tune1) {
+                // tune1: compare time
+                if (current_speed < last_speed || times==tuning_plans) {
+                    // found: last time best!
+                    tune1_speed = last_speed;
+                    if (speed_tolerance==0) { tune_end = true; } // no tolerance
+                    else { tune1 = false; tuning_times /= tune2_skip; } // finish tune1, start tune2 coarse tuning.
+                    times = 0;
+                } else {
+                    last_speed = current_speed;
+                    times++;
+                }
+            } else {
+                wait_for_power = true;
+                times++;
             }
-            last_time = current_time;
-            current_time = 0;
-            // clear dirty tuning kv history
-            setKVCacheInfo(0, getCurrentHistory());
-            reset();
         }
 
-        // tune 2 for energy
-        auto tune1_time = last_time;
-        float tune1_speed = (DECODE_TUNE_TIMES/(float)tune1_time)*1000;
-        tuneConfig.backendConfig->power = BackendConfig::Power_MemoryBoundTune2;
-        for (int times=0; times<DECODE_TUNE2_PLANS; ++times) {
-            switchMode(Llm::Prefill);
-            auto logits = forward(test_prompt); // prefill a prompt of length length.
-            auto res = logits->readMap<float>()[0];
-            mMeta->add = 1;
-            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
+        if (tune_end) {
+            // tuning finished, reset decode_modules_ to Power_MemoryBound.
+            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
             for (int v = 0; v < decode_modules_.size(); ++v) {
-                decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
+                decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
             }
-            current_modules_ = decode_modules_;
-            for (int t=0; t<DECODE_TUNE_TIMES; ++t){
-                auto st     = std::chrono::system_clock::now();
-                auto logits = forward({200});
-                res = logits->readMap<float>()[0];
-                auto et      = std::chrono::system_clock::now();
-                current_time += std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
-            }
-            float current_speed = (DECODE_TUNE_TIMES/(float)current_time)*1000;
-            MNN_PRINT("Current Speed: %.1f tok/s\n", current_speed);
-            if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed) {
-                break; // founded
-            }
-            current_time = 0;
-            // clear dirty tuning kv history
-            setKVCacheInfo(0, getCurrentHistory());
-            reset();
-        }        
-
-        // tuning finished, reset decode_modules_ to Power_MemoryBound.
-        ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
-        for (int v = 0; v < decode_modules_.size(); ++v) {
-            decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
+            tuned_config = runtime_manager_->getCPUCoreConfig();
+            // record CPU cores, the tuning results.
+            MNN_PRINT("CPU MemoryBound Core Group: [");
+            for (auto& cpuid : tuned_config) { MNN_PRINT("%d, ", cpuid);  }
+            MNN_PRINT("]\n");
+            // reset all static var
+            tune1 = true;
+            wait_for_power = false;
+            times = 0;
+            current_speed = 0;
+            last_speed = 0;
+            tune1_speed = 0;
+            tune2_list.clear();
         }
-        auto cpu_cores = runtime_manager_->getCPUCoreConfig();
-        MNN_PRINT("CPU MemoryBound Core Group: ");
-        for (auto& c:cpu_cores) { MNN_PRINT("%d, ", c);  }
-        MNN_PRINT("\n");
-        delete tuneConfig.backendConfig;
+
+        // return tune_end indicator
+        return tune_end;
     }
+
+    // not CPU, do not tune.
+    return true;
+}
+
+void Llm::tuning(TuneType type, std::vector<int> candidates) {
+    // prefill backend tuning
+    // cpu tuning
 
     // metal tuning
     if (type != OP_ENCODER_NUMBER) {

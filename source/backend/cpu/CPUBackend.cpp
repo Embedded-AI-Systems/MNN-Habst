@@ -410,7 +410,7 @@ void CPURuntime::_resetThreadPool() {
             }
 
             // Debug print
-            if (mTuneLws.currentTunePlan==0 || mTuneLws.executed) {
+            if (mTuneLws.executed) {
                 MNN_PRINT("[CPU Debug] Tune2: \n");
                 for (auto& id: mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second) { MNN_PRINT("%d ", id); }
                 MNN_PRINT("\n");
@@ -428,7 +428,11 @@ void CPURuntime::_resetThreadPool() {
                     if (mTuneLws.mMemoryBoundTune.size() == 1) { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune.back())); }
                     else { 
                         if (mTuneLws.tune1) { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(*(mTuneLws.mMemoryBoundTune.end()-2))); } // tune1: terminater with the previous peaked one.
-                        else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan])); } // tune2: terminate with the current first satisfying one.
+                        else { 
+                            if (hint().cpuCoreSearchIndex<0 || hint().cpuCoreSearchIndex>=mTuneLws.mMemoryBoundTune.size()) // tune2: terminate with the current first satisfying one without energy hint.
+                                { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan])); }
+                            else { mTuneLws.mMemoryBoundTuned.reset(new std::pair<int, std::vector<int>>(mTuneLws.mMemoryBoundTune[hint().cpuCoreSearchIndex])); } // external hint selection.
+                        } 
                     } // second last one. (based on the bitonic assumption.)
                     mTuneLws.mMemoryBoundTune.clear(); // clear last tuning intermediate results.
                     mHint.cpuCoreConfig = mTuneLws.mMemoryBoundTuned->second; // update the tuned results to the RuntimeHint.

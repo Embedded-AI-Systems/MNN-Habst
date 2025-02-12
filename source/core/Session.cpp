@@ -106,14 +106,8 @@ void Session::ModeGroup::setHint(Interpreter::HintMode mode, int hint) {
         case Interpreter::USE_CACHED_MMAP:
             runtimeHint.useCachedMmap = hint;
             break;
-        default:
-            break;
-    }
-}
-void Session::ModeGroup::setHint(Interpreter::HintMode mode, float hint) {
-    switch (mode) {
-        case Interpreter::CPU_MEMORYBOUND_ENERGY:
-            runtimeHint.cpuEnergy = hint;
+        case Interpreter::CPU_MEMORYBOUND_SEARCH_INDEX:
+            runtimeHint.cpuCoreSearchIndex = hint;
             break;
         default:
             break;

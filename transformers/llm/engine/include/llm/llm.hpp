@@ -66,7 +66,8 @@ public:
     void chat();
     void reset();
     void trace(bool start);
-    void tuning(TuneType type, std::vector<int> candidates, int speed_tolerance=5);
+    bool decode_tuning(std::vector<int>& tuned_config, const float* energy=nullptr, int speed_tolerance=5); // unit: mJ
+    void tuning(TuneType type, std::vector<int> candidates);
     virtual void load();
     void switchMode(Stage stage);
     void setKVCacheInfo(size_t add, size_t remove, int* reserve = nullptr, int n_reserve = 0);
@@ -103,6 +104,8 @@ public:
     const GenerateState& getState() const {
         return mState;
     }
+public:
+    int decode_tune_times = 20;
 protected:
     std::shared_ptr<KVMeta> mMeta;
     std::shared_ptr<LlmConfig> config_;

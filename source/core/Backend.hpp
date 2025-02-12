@@ -65,8 +65,8 @@ struct RuntimeHint {
     // op encoder number for once commit
     int encorderNumForCommit = 10;
 
-    // tuning hint: cpu energy
-    float cpuEnergy = 0.0f; // mJ
+    // tuning hint: cpu search hint
+    int cpuCoreSearchIndex = -1; // default no
 
     // CPU core config
     std::vector<int> cpuCoreConfig;

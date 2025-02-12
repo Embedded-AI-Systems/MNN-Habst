@@ -245,7 +245,7 @@ public:
         USE_CACHED_MMAP = 12,
 
         // cpu core config under memory bound mode
-        CPU_MEMORYBOUND_ENERGY = 15,
+        CPU_MEMORYBOUND_SEARCH_INDEX = 15,
         CPU_MEMORYBOUND_CORE_CONFIG = 16
     };
 
