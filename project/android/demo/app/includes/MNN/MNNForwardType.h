@@ -57,7 +57,8 @@ struct BackendConfig {
         Power_Low,
         Power_MemoryBoundTune1, 
         Power_MemoryBoundTune2, 
-        Power_MemoryBound
+        Power_MemoryBound,
+        Power_SelectCore
     };
     
     PowerMode power = Power_Normal;

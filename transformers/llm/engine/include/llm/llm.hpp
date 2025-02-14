@@ -105,6 +105,7 @@ public:
         return mState;
     }
 public:
+    int prefill_tune_times = 20;
     int decode_tune_times = 20;
 protected:
     std::shared_ptr<KVMeta> mMeta;

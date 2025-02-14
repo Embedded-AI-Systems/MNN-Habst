@@ -115,7 +115,7 @@ void Session::ModeGroup::setHint(Interpreter::HintMode mode, int hint) {
 }
 void Session::ModeGroup::setHint(Interpreter::HintMode mode, const std::vector<int>& hint) {
     switch (mode) {
-        case Interpreter::CPU_MEMORYBOUND_CORE_CONFIG:
+        case Interpreter::CPU_CORE_CONFIG:
             runtimeHint.cpuCoreConfig = hint;
             break;
         default:

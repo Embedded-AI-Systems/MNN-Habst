@@ -246,7 +246,7 @@ public:
 
         // cpu core config under memory bound mode
         CPU_MEMORYBOUND_SEARCH_INDEX = 15,
-        CPU_MEMORYBOUND_CORE_CONFIG = 16
+        CPU_CORE_CONFIG = 16
     };
 
     enum ExternalPathType {

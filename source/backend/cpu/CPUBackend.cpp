@@ -49,6 +49,14 @@ ErrorCode CastWrapExecution::onExecute(const std::vector<Tensor*>& inputs, const
     CPUCastCreator::cast(inputs[0], outputs[0], cpuBackend, convertType);
     return NO_ERROR;
 }
+
+int getMajorCPUNumber(const std::vector<CPUGroup>& groups) {
+    int sum = 0;
+    for (const auto& g: groups) {
+        if (g.cpuType != CPUGroup::Efficient) { sum+=g.ids.size(); }
+    }
+    return sum;
+}
 void CPUBackend::computeDivideSizes(int size, int* dst, float avgDiv) const {
     if (mGroupWithComputeRate.size() <= 1 || (avgDiv > 0 && avgDiv < mComputeI)) {
         // Avg divide
@@ -147,6 +155,17 @@ void CPURuntime::_bindCPUCore() {
         }
             break;
         // MemoryBoundTune Binding End
+        case BackendConfig::Power_SelectCore:
+        {
+            // get mTuneLws.mMemoryBoundTuned as the tuned plan.
+            auto coreMap = (hint().cpuCoreConfig.empty()) \
+                                ? (getTune1Sched(getMajorCPUNumber(MNNGetCPUInfo()->groups))) \
+                                : (hint().cpuCoreConfig);
+            for (int v=0; v<mThreadNumber; ++v) {
+                lockCPUIndexes[v] = std::make_pair(cpuInfo->groups[coreMap[v]].ids.data(), cpuInfo->groups[coreMap[v]].ids.size());
+            }
+        }
+            break;
         default:
             break;
     }
@@ -190,14 +209,6 @@ std::vector<int> CPURuntime::getTune1Sched(int numThread) const {
     MNN_PRINT("extimated power: %.5f\n", estimatePower(tune_list));
     // Debug end
     return tune_list;
-}
-
-int getMajorCPUNumber(const std::vector<CPUGroup>& groups) {
-    int sum = 0;
-    for (const auto& g: groups) {
-        if (g.cpuType != CPUGroup::Efficient) { sum+=g.ids.size(); }
-    }
-    return sum;
 }
 
 float CPURuntime::estimatePower(const std::vector<int>& config) const {
@@ -361,6 +372,12 @@ void CPURuntime::_resetThreadPool() {
     int systemThreadNumber = (int)cpuInfo->cpuNumber;
     // MemoryBoundTune1
     if (systemThreadNumber > 1) {
+        if (mPower == BackendConfig::Power_SelectCore) {
+            if (hint().cpuCoreConfig.empty()) {
+                // no selection, use all major cores.
+                mThreadNumber=getMajorCPUNumber(MNNGetCPUInfo()->groups);
+            }
+        }
         if (mPower == BackendConfig::Power_MemoryBoundTune1) {
             // 1. initialize next tuning plan
             mTuneLws.tune1 = true;

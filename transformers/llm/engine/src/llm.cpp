@@ -219,6 +219,30 @@ static MNNForwardType backend_type_convert(const std::string& type_str) {
     return MNN_FORWARD_AUTO;
 }
 
+static BackendConfig::PowerMode power_mode_convert(const std::string& type_str) {
+    if (type_str == "low")
+        return BackendConfig::Power_Low;
+    if (type_str == "normal")
+        return BackendConfig::Power_Normal;
+    if (type_str == "high")
+        return BackendConfig::Power_High;
+    if (type_str == "memory")
+        return BackendConfig::Power_MemoryBound;
+    if (type_str == "select" || type_str == "exhaustive")
+        return BackendConfig::Power_SelectCore;
+    return BackendConfig::Power_Normal;
+}
+
+static std::vector<int> core_plan_convert(const std::string& core_str) {
+    std::istringstream stream(core_str);
+    std::string token;
+    std::vector<int> numbers;
+    while (stream >> token) {
+        numbers.push_back(std::stoi(token));
+    }
+    return numbers;
+}
+
 std::string Llm::dump_config() {
     return config_->config_.dump();
 }
@@ -242,7 +266,8 @@ void Llm::init_runtime() {
     BackendConfig cpuBackendConfig;
     // setup prefill config
     prefill_config.type      = backend_type_convert(config_->backend_type());
-    prefill_config.numThread = config_->thread_num();
+    prefill_config.numThread = (config_->prefill_thread_num() < 0) \
+        ? config_->thread_num() : config_->prefill_thread_num();
     ExecutorScope::Current()->setGlobalExecutorConfig(prefill_config.type, cpuBackendConfig, prefill_config.numThread);
     if (config_->memory() == "high") {
         cpuBackendConfig.memory = BackendConfig::Memory_High;
@@ -254,17 +279,24 @@ void Llm::init_runtime() {
     } else if (config_->precision() == "low") {
         cpuBackendConfig.precision = BackendConfig::Precision_Low;
     }
-    cpuBackendConfig.power = BackendConfig::Power_High;
+    std::string powerConfig = (config_->prefill_power().empty()) \
+        ? config_->power() : config_->prefill_power();
+    cpuBackendConfig.power = power_mode_convert(powerConfig);
     prefill_config.backendConfig = new BackendConfig(cpuBackendConfig);
     // set up decode_config
     decode_config = prefill_config;
     decode_config.backendConfig = new BackendConfig(cpuBackendConfig);
-    decode_config.backendConfig->power = BackendConfig::Power_MemoryBound;
+    decode_config.numThread = (config_->decode_thread_num() < 0) \
+        ? config_->thread_num() : config_->decode_thread_num();
+    powerConfig = (config_->decode_power().empty()) \
+        ? config_->power() : config_->decode_power();
+    decode_config.backendConfig->power = power_mode_convert(powerConfig);
 
     runtime_manager_.reset(Executor::RuntimeManager::createRuntimeManager(prefill_config));
     runtime_manager_->setHint(MNN::Interpreter::MEM_ALLOCATOR_TYPE, 0);
     runtime_manager_->setHint(MNN::Interpreter::QKV_QUANT_OPTIONS, config_->quant_qkv());
     runtime_manager_->setHint(MNN::Interpreter::KVCACHE_SIZE_LIMIT, config_->kvcache_limit());
+    runtime_manager_->setHint(MNN::Interpreter::CPU_CORE_CONFIG, core_plan_convert(config_->decode_cores()));
     if (config_->use_cached_mmap()) {
         runtime_manager_->setHint(MNN::Interpreter::USE_CACHED_MMAP, 1);
     }
@@ -296,6 +328,8 @@ void Llm::init_runtime() {
 }
 
 void Llm::load() {
+    prefill_tune_times = config_->prefill_tune_times();
+    decode_tune_times = config_->decode_tune_times();
     init_runtime();
     // init module status
     // 1. load vocab
@@ -409,13 +443,13 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
     static std::vector<std::pair<float,float>> tune2_list;
     static int tuning_times = decode_tune_times;
 
-    // Return: tuning end indicator
-    bool tune_end = false;
-    int tuning_plans = (tune1) ? DECODE_TUNE1_PLANS : DECODE_TUNE2_PLANS;
-
     // decode backend tuning
     if (decode_config.type == MNN_FORWARD_CPU \
         && decode_config.backendConfig->power == BackendConfig::Power_MemoryBound) {
+        // Return: tuning end indicator
+        bool tune_end = false;
+        int tuning_plans = (tune1) ? DECODE_TUNE1_PLANS : DECODE_TUNE2_PLANS;
+
         auto tuneConfig = decode_config;
         tuneConfig.backendConfig = new BackendConfig(*(decode_config.backendConfig));
 
