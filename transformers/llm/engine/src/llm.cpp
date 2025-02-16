@@ -359,6 +359,7 @@ void Llm::load() {
                                        {"input_ids", "attention_mask", "position_ids"},
                                        {"logits"}, model_path.c_str(), runtime_manager_, &module_config));
     MNN_PRINT("Load Module Done!\n");
+    ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
     decode_modules_.resize(modules_.size());
     for (int v = 0; v < modules_.size(); ++v) {
         decode_modules_[v].reset(Module::clone(modules_[v].get(), &decode_config));

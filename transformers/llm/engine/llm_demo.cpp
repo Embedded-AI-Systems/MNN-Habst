@@ -195,6 +195,7 @@ int main(int argc, const char* argv[]) {
     std::unique_ptr<Llm> llm(Llm::createLLM(config_path));
     llm->set_config("{\"tmp_path\":\"tmp\"}");
     llm->set_config("{\"thread_num\": 0}");
+    llm->set_config("{\"decode_power\": \"memory\"}");
     {
         AUTOTIME;
         llm->load();
