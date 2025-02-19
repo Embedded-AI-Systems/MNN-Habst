@@ -33,6 +33,7 @@ class DiskEmbedding;
 enum TuneType {
     // op encoder number for commit
     OP_ENCODER_NUMBER = 0,
+    PREFILL_BIGLITTLE_CORE,
     PREFILL_BACKEND,
     DECODE_CONFIG
 };
@@ -105,8 +106,10 @@ public:
         return mState;
     }
 public:
-    int prefill_tune_times = 20;
+    int prefill_tune_times = 5;
     int decode_tune_times = 20;
+protected:
+    std::vector<std::pair<int, int>> prefillBigLittleRate;
 protected:
     std::shared_ptr<KVMeta> mMeta;
     std::shared_ptr<LlmConfig> config_;

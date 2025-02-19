@@ -17,6 +17,7 @@ using namespace MNN::Transformer;
 static void tuning_prepare(Llm* llm) {
     MNN_PRINT("Prepare for tuning opt Begin\n");
     llm->tuning(OP_ENCODER_NUMBER, {1, 5, 10, 20, 30, 50, 100});
+    llm->tuning(PREFILL_BIGLITTLE_CORE, {});
     bool tune_end = false;
     std::vector<int> cpu_config;
     while(!tune_end)  {
@@ -195,6 +196,7 @@ int main(int argc, const char* argv[]) {
     std::unique_ptr<Llm> llm(Llm::createLLM(config_path));
     llm->set_config("{\"tmp_path\":\"tmp\"}");
     llm->set_config("{\"thread_num\": 0}");
+    llm->set_config("{\"prefill_power\": \"high\"}");
     llm->set_config("{\"decode_power\": \"memory\"}");
     {
         AUTOTIME;

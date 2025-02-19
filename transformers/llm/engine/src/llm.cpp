@@ -566,46 +566,75 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
     return true;
 }
 
-void Llm::tuning(TuneType type, std::vector<int> candidates) {
-    // prefill backend tuning
-    // cpu tuning
-
-    // metal tuning
-    if (type != OP_ENCODER_NUMBER) {
-        MNN_ERROR("tuning type not supported\n");
-        return;
-    }
-    if (config_->backend_type() != "metal") {
-        return;
-    }
-
-    current_modules_     = decode_modules_;
-    int64_t min_time     = INT64_MAX;
-    int prefer_candidate = 10;
-    for (auto& candidate : candidates) {
-        runtime_manager_->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, candidate);
-        mMeta->add = 1;
-        auto st     = std::chrono::system_clock::now();
-        auto logits = forward({0});
-        if (nullptr == logits.get()) {
+void Llm::tuning(TuneType type, std::vector<int> candidates){
+    auto itp_type = Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT;
+    int test_times = 10;
+    std::vector<int> lengths;
+    std::vector<int> test_prompt;
+    prefillBigLittleRate.clear();
+    // configure prefill tuning
+    switch(type){
+        case PREFILL_BIGLITTLE_CORE:
+            switchMode(Prefill);
+            itp_type = Interpreter::CPU_LITTLECORE_DECREASE_RATE;
+            if (candidates.empty()){
+                candidates = {50, 55, 60, 65, 70, 75, 80, 85, 90};
+            }
+            lengths = {16, 64, 256};
+            test_times = prefill_tune_times;
+            break;
+        case OP_ENCODER_NUMBER:
+            switchMode(Decode);
+            itp_type = Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT;
+            if(config_->backend_type() != "metal"){
+                return;
+            }            
+            if (candidates.empty()){
+                candidates = {1, 5, 10, 20, 30, 50, 100};
+            }
+            lengths = {1};
+            test_times = decode_tune_times;
+            break;
+        default:
             return;
-        }
-        if (logits->getInfo()->size == 0) {
-            return;
-        }
-        auto token   = sample(logits, {});
-        auto et      = std::chrono::system_clock::now();
-        int64_t time = std::chrono::duration_cast<std::chrono::microseconds>(et - st).count();
-        if (time < min_time) {
-            prefer_candidate = candidate;
-            min_time         = time;
-            // MNN_PRINT("op encode number:%d, decode time: %lld us\n", candidate, time);
-        }
     }
-    runtime_manager_->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, prefer_candidate);
-    // clear dirty tuning kv history
-    setKVCacheInfo(0, getCurrentHistory());
-    reset();
+
+    // test start
+    MNN_PRINT("start prefill tuning!\n");
+    for(auto& length: lengths){
+        int64_t min_time     = INT64_MAX;
+        int prefer_candidate = candidates[0];
+        test_prompt.resize(length, MAGIC_TOKEN);
+        for (auto& candidate : candidates) {
+            // runtime_manager_->setHint(itp_type, candidate);
+            auto st      = std::chrono::system_clock::now();
+            for(int i=0; i<test_times; ++i){
+                mMeta->add  = length;
+                auto logits = forward(test_prompt);
+                auto token  = sample(logits, {});
+                if (length>1) {
+                    // clear dirty tuning kv history
+                    setKVCacheInfo(0, getCurrentHistory());
+                    reset();
+                }
+            }
+            auto et      = std::chrono::system_clock::now();
+            int64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
+            if (time < min_time) {
+                prefer_candidate = candidate;
+                min_time         = time;
+                MNN_PRINT("candidate id: %d, speed: %.5f tok/s\n", candidate, length*test_times*1000.0/(float)time);
+            }
+            // clear dirty tuning kv history
+            setKVCacheInfo(0, getCurrentHistory());
+            reset();
+        }
+        std::pair<int,int> hint_pair;
+        hint_pair.first = length;
+        hint_pair.second = prefer_candidate;
+        prefillBigLittleRate.push_back(hint_pair);
+    }
+
 }
 void Llm::switchMode(Llm::Stage stage) {
     switch (stage) {
