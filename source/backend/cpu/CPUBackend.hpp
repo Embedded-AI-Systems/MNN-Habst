@@ -199,6 +199,7 @@ public:
     friend class CPURuntime;
 
 protected:
+    void computeGroupRate();
     MemObj* allocBuffer(size_t size, Tensor* dest,  StorageType storageType);
     CoreFunctions* mCoreFunctions;
     CoreInt8Functions* mInt8CoreFunctions;

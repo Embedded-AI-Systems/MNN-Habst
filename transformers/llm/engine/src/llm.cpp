@@ -575,6 +575,7 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
     // configure prefill tuning
     switch(type){
         case PREFILL_BIGLITTLE_CORE:
+            prefillBigLittleRate.clear();
             switchMode(Prefill);
             itp_type = Interpreter::CPU_LITTLECORE_DECREASE_RATE;
             if (candidates.empty()){
@@ -606,7 +607,14 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
         int prefer_candidate = candidates[0];
         test_prompt.resize(length, MAGIC_TOKEN);
         for (auto& candidate : candidates) {
-            // runtime_manager_->setHint(itp_type, candidate);
+            runtime_manager_->setHint(itp_type, candidate);
+            if (type==PREFILL_BIGLITTLE_CORE) {
+                // clone 1 since Hint changed for big.Little core config.
+                for (int v = 0; v < prefill_modules_.size(); ++v) {
+                    prefill_modules_[v].reset(Module::clone(prefill_modules_[v].get()));
+                }
+                current_modules_=prefill_modules_;
+            }
             auto st      = std::chrono::system_clock::now();
             for(int i=0; i<test_times; ++i){
                 mMeta->add  = length;
@@ -623,18 +631,24 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
             if (time < min_time) {
                 prefer_candidate = candidate;
                 min_time         = time;
-                MNN_PRINT("candidate id: %d, speed: %.5f tok/s\n", candidate, length*test_times*1000.0/(float)time);
             }
+            MNN_PRINT("candidate id: %d, speed: %.5f tok/s\n", candidate, length*test_times*1000.0/(float)time);
             // clear dirty tuning kv history
             setKVCacheInfo(0, getCurrentHistory());
             reset();
         }
-        std::pair<int,int> hint_pair;
-        hint_pair.first = length;
-        hint_pair.second = prefer_candidate;
-        prefillBigLittleRate.push_back(hint_pair);
+        // post 
+        switch(type){
+            case PREFILL_BIGLITTLE_CORE:
+                prefillBigLittleRate.push_back(std::make_pair(length, prefer_candidate));
+                break;
+            case OP_ENCODER_NUMBER:
+                runtime_manager_->setHint(itp_type, prefer_candidate);
+                break;
+            default:
+                return;
+        }
     }
-
 }
 void Llm::switchMode(Llm::Stage stage) {
     switch (stage) {
