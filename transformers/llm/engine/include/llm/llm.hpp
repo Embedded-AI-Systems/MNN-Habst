@@ -107,9 +107,7 @@ public:
     }
 public:
     int prefill_tune_times = 2;
-    int decode_tune_times = 20;
-protected:
-    std::vector<std::pair<int, int>> prefillBigLittleRate;
+    int decode_tune_times = 30;
 protected:
     std::shared_ptr<KVMeta> mMeta;
     std::shared_ptr<LlmConfig> config_;

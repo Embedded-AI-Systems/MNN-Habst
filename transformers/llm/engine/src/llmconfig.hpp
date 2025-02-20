@@ -342,7 +342,7 @@ public:
     }
 
     int prefill_tune_times() const {
-        return config_.value("prefill_tune_times", 3);
+        return config_.value("prefill_tune_times", 2);
     }
 
     int decode_tune_times() const {

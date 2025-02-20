@@ -569,32 +569,41 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
 void Llm::tuning(TuneType type, std::vector<int> candidates){
     auto itp_type = Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT;
     int test_times = 10;
-    std::vector<int> lengths;
+    int length = 64;
     std::vector<int> test_prompt;
-    prefillBigLittleRate.clear();
     // configure prefill tuning
     switch(type){
         case PREFILL_BIGLITTLE_CORE:
-            prefillBigLittleRate.clear();
-            switchMode(Prefill);
-            itp_type = Interpreter::CPU_LITTLECORE_DECREASE_RATE;
+        {
+            // only CPU power high is tuned
+            if (prefill_config.type != MNN_FORWARD_CPU) {
+                return;
+            }
+            if (prefill_config.backendConfig->power != BackendConfig::Power_High) {
+                return;
+            }
             if (candidates.empty()){
                 candidates = {50, 55, 60, 65, 70, 75, 80, 85, 90};
             }
-            lengths = {16, 64, 256};
+            itp_type = Interpreter::CPU_LITTLECORE_DECREASE_RATE;
+            switchMode(Prefill);
+            length = 64;
             test_times = prefill_tune_times;
+        }
             break;
         case OP_ENCODER_NUMBER:
-            switchMode(Decode);
-            itp_type = Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT;
+        {
             if(config_->backend_type() != "metal"){
                 return;
             }            
             if (candidates.empty()){
                 candidates = {1, 5, 10, 20, 30, 50, 100};
             }
-            lengths = {1};
+            itp_type = Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT;
+            switchMode(Decode);
+            length = 1;
             test_times = decode_tune_times;
+        }
             break;
         default:
             return;
@@ -602,7 +611,7 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
 
     // test start
     MNN_PRINT("start prefill tuning!\n");
-    for(auto& length: lengths){
+    {
         int64_t min_time     = INT64_MAX;
         int prefer_candidate = candidates[0];
         test_prompt.resize(length, MAGIC_TOKEN);
@@ -628,25 +637,19 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
             }
             auto et      = std::chrono::system_clock::now();
             int64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
+            MNN_PRINT("[Llm::tuning] candidate: %d, speed: %.5f tok/s\n", candidate, length*test_times*1000.0/(float)time);
             if (time < min_time) {
                 prefer_candidate = candidate;
                 min_time         = time;
             }
-            MNN_PRINT("candidate id: %d, speed: %.5f tok/s\n", candidate, length*test_times*1000.0/(float)time);
             // clear dirty tuning kv history
             setKVCacheInfo(0, getCurrentHistory());
             reset();
         }
-        // post 
-        switch(type){
-            case PREFILL_BIGLITTLE_CORE:
-                prefillBigLittleRate.push_back(std::make_pair(length, prefer_candidate));
-                break;
-            case OP_ENCODER_NUMBER:
-                runtime_manager_->setHint(itp_type, prefer_candidate);
-                break;
-            default:
-                return;
+        // post setting
+        runtime_manager_->setHint(itp_type, prefer_candidate);
+        for (int v = 0; v < prefill_modules_.size(); ++v) {
+            prefill_modules_[v].reset(Module::clone(prefill_modules_[v].get()));
         }
     }
 }
