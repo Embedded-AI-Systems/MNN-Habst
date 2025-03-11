@@ -116,7 +116,7 @@ int MNNSetSchedAffinity(const int* cpuIDs, int size) {
 
 // cpuinfo
 // Reference from: https://github.com/pytorch/cpuinfo
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__ANDROID__) && (defined(__arm__) || defined(__aarch64__))
 
 /* As per include/sys/system_properties.h in Android NDK */
 #define CPUINFO_HARDWARE_VALUE_MAX 64
