@@ -37,6 +37,9 @@
 
 #include <algorithm>
 #include <string>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 
 #include "core/Macro.h"
 #ifdef __ANDROID__
@@ -1352,6 +1355,36 @@ const MNNCPUInfo* MNNGetCPUInfo() {
     return gCPUInfo;
 }
 
+#ifdef __linux__
+// Function to trim leading and trailing spaces from a string
+static std::string trim(const std::string& str) {
+    size_t first = str.find_first_not_of(" \t");
+    if (first == std::string::npos)
+        return ""; // Return empty string if all characters are spaces
+    size_t last = str.find_last_not_of(" \t");
+    return str.substr(first, (last - first + 1));
+}
+static std::vector<std::string> _fillCpuPart() {
+    std::vector<std::string> cpu_parts;
+    std::ifstream file("/proc/cpuinfo");
+    std::string line;
+    if (!file.is_open()) { return cpu_parts; } // return empty list if file not exist!
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string key, value;
+        if (std::getline(iss, key, ':') && std::getline(iss, value)) {
+            key = trim(key); // Trim leading and trailing spaces from key
+            value = trim(value); // Trim leading and trailing spaces from value
+            if (key == "CPU part") {
+                cpu_parts.push_back(value);
+            }
+        }
+    }
+    file.close();
+    return cpu_parts;
+}
+#endif
+
 static void _fillInfo(MNNCPUInfo* cpuinfo_isa) {
     cpuinfo_isa->dot = false;
     cpuinfo_isa->fp16arith = false;
@@ -1426,6 +1459,8 @@ static void _fillInfo(MNNCPUInfo* cpuinfo_isa) {
                 group.capacity = _readNumber((const char*)buffer.get(), buffer.size())[0];
             }
         } while(false);
+        // get CPU part from /proc/cpuinfo
+        std::vector<std::string> cpu_parts = _fillCpuPart();
         // classify cpuType
         // 1. get prime maxFreq, minFreq, capacity, /proc/cpuinfo type code
         // 2. All the cores with 1) same type code; or 2) >=80% freq and capacity, are classified as prime.
@@ -1435,8 +1470,13 @@ static void _fillInfo(MNNCPUInfo* cpuinfo_isa) {
         auto lowest_maxFreq = cpuinfo_isa->groups.front().maxFreq;
         auto lowesr_minFreq = cpuinfo_isa->groups.front().minFreq;
         for (auto& group: cpuinfo_isa->groups) {
-            if (((float)group.maxFreq >= 0.8*(float)prime_info.maxFreq) && ((float)group.capacity >= 0.8*(float)prime_info.capacity))
-                { group.cpuType=CPUGroup::Prime; continue; }
+            if (cpu_parts.empty()) {
+                if (((float)group.maxFreq >= 0.8*(float)prime_info.maxFreq) && ((float)group.capacity >= 0.8*(float)prime_info.capacity))
+                    { group.cpuType=CPUGroup::Prime; continue; }
+            } else {
+                if (cpu_parts[prime_info.ids.front()] == cpu_parts[group.ids.front()])
+                    { group.cpuType=CPUGroup::Prime; continue; }
+            }
             if ((((float)group.maxFreq >= 0.7*(float)prime_info.maxFreq) && ((float)group.capacity >= 0.5*(float)prime_info.capacity)) \
                 || ((float)group.minFreq > (float)lowesr_minFreq) && ((float)group.maxFreq > (float)lowest_maxFreq)) 
                 { group.cpuType=CPUGroup::Performance; continue; }

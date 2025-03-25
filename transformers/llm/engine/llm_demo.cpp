@@ -196,9 +196,10 @@ int main(int argc, const char* argv[]) {
     std::cout << "config path is " << config_path << std::endl;
     std::unique_ptr<Llm> llm(Llm::createLLM(config_path));
     llm->set_config("{\"tmp_path\":\"tmp\"}");
-    llm->set_config("{\"thread_num\": 0}");
-    llm->set_config("{\"prefill_power\": \"high\"}");
-    llm->set_config("{\"decode_power\": \"memory\"}");
+    llm->set_config("{\"thread_num\": 68}");
+    llm->set_config("{\"backend_type\": \"opencl\"}");
+    // llm->set_config("{\"prefill_power\": \"high\"}");
+    // llm->set_config("{\"decode_power\": \"memory\"}");
     {
         AUTOTIME;
         llm->load();
