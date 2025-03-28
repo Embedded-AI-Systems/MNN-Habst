@@ -434,7 +434,7 @@ void Llm::trace(bool start) {
 }
 
 bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int speed_tolerance) {
-    const int tune2_skip = 2;
+    const int tune2_skip = 1;
     static bool tune1 = true;
     static bool wait_for_power = false;
     static int times = 0;
@@ -454,45 +454,53 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
         auto tuneConfig = decode_config;
         tuneConfig.backendConfig = new BackendConfig(*(decode_config.backendConfig));
 
-        bool need_tune = true;
-
         if (wait_for_power) 
         {
-            // tune2: waiting for power registration
-            if (power == nullptr) {
-                // no power input, use heuristic.
-                if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed || times==tuning_plans) {
-                    tune_end = true; // founded
-                    need_tune = false;
-                }
-            } else {
-                tune2_list.push_back(std::make_pair(current_speed, (*power)*(1/current_speed)));
-                if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed) {
-                    if (tuning_times<decode_tune_times) { tuning_times=decode_tune_times; } // tune2: coarse -> fine.
-                }
-                if ((current_speed >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_speed) \
-                    || (times==tuning_plans)) {
-                    // termination
-                    int best = tune2_list.size()-1;
-                    float best_energy = tune2_list.back().second;
-                    for (int i=0; i<tune2_list.size(); ++i) {
-                        if (tune2_list[i].first < (1-(float)speed_tolerance/100)*tune1_speed) { continue; }
-                        if (tune2_list[i].second < best_energy) {
-                            best_energy = tune2_list[i].second;
-                            best = i;
-                        }
-                    }
-                    runtime_manager_->setHint(Interpreter::CPU_MEMORYBOUND_SEARCH_INDEX, best);
-                    MNN_PRINT("Best energy: %.4f mJ\n", best_energy);
-                    tune_end = true; // terminated
-                }
-                need_tune = false;
-            }
             wait_for_power = false;
+            // tune1: 
+            if (tune1) {
+                // tune1: compare time to decide finish or not
+                if (current_speed < last_speed || times==tuning_plans) {
+                    // found: last time best!
+                    tune1_speed = last_speed;
+                    if (speed_tolerance==0) { tune_end = true; } // no tolerance
+                    else { tune1 = false; tuning_times /= tune2_skip; } // finish tune1, start tune2 coarse tuning.
+                    times = 0;
+                }
+                last_speed = current_speed;
+            } else {
+                // tune2: waiting for power registration
+                if (power == nullptr) {
+                    // no power input, use heuristic.
+                    if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed || times==tuning_plans) {
+                        tune_end = true; // founded
+                    }
+                } else {
+                    tune2_list.push_back(std::make_pair(current_speed, (*power)*(1/current_speed)));
+                    MNN_PRINT("Current energy: %.4f mJ\n", tune2_list.back().second);
+                    if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed) {
+                        if (tuning_times<decode_tune_times) { tuning_times=decode_tune_times; } // tune2: coarse -> fine.
+                    }
+                    if ((current_speed >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_speed) \
+                        || (times==tuning_plans)) {
+                        // termination
+                        int best = tune2_list.size()-1;
+                        float best_energy = tune2_list.back().second;
+                        for (int i=0; i<tune2_list.size(); ++i) {
+                            if (tune2_list[i].first < (1-(float)(FLUCTUATION_TOLERANCE+speed_tolerance)/100)*tune1_speed) { continue; }
+                            if (tune2_list[i].second < best_energy) {
+                                best_energy = tune2_list[i].second;
+                                best = i;
+                            }
+                        }
+                        runtime_manager_->setHint(Interpreter::CPU_MEMORYBOUND_SEARCH_INDEX, best);
+                        MNN_PRINT("Best energy: %.4f mJ\n", best_energy);
+                        tune_end = true; // terminated
+                    }
+                }
+            }
         } 
-        
-        if (need_tune && (!tune_end))
-        {
+        else {
             // direct tuning, not waiting.
             tuneConfig.backendConfig->power = (tune1) ? BackendConfig::Power_MemoryBoundTune1 : BackendConfig::Power_MemoryBoundTune2;
             if (times < tuning_plans) {
@@ -519,22 +527,8 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             // release dynamic memory
             delete tuneConfig.backendConfig;
             // handle tuning
-            if (tune1) {
-                // tune1: compare time
-                if (current_speed < last_speed || times==tuning_plans) {
-                    // found: last time best!
-                    tune1_speed = last_speed;
-                    if (speed_tolerance==0) { tune_end = true; } // no tolerance
-                    else { tune1 = false; tuning_times /= tune2_skip; } // finish tune1, start tune2 coarse tuning.
-                    times = 0;
-                } else {
-                    last_speed = current_speed;
-                    times++;
-                }
-            } else {
-                wait_for_power = true;
-                times++;
-            }
+            wait_for_power = true;
+            times++;
         }
 
         if (tune_end) {
