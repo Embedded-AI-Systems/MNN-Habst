@@ -329,9 +329,17 @@ std::vector<std::vector<int>> CPURuntime::mergeSortTune2Config(const std::vector
 
 void CPURuntime::getTune2Sched(std::vector<int> tune1_list) {
     // the sched is directly stored in mTuneLws.mMemoryBoundTune
-    // tier 1 reduce core
-    std::vector<std::vector<int>> branch1;
-    reduceTune2Core(tune1_list, branch1);
+    // tier 1 reduce 2/1 core 
+    std::vector<std::vector<int>> branch0; // remove 2
+    std::vector<std::vector<int>> branch1; // remove 1
+    reduceTune2Core(tune1_list, branch1); // remove 1
+    if (!branch1.empty()) {
+        reduceTune2Core(branch1.back(), branch0); // remove 1 more
+        if (!branch0.empty()) {
+            changeTune2Core(branch0.back(), branch0);
+            changeTune2Group(branch0.back(), branch0);
+        }
+    }
     if (!branch1.empty()) { 
         changeTune2Core(branch1.back(), branch1);
         changeTune2Group(branch1.back(), branch1);
@@ -352,7 +360,8 @@ void CPURuntime::getTune2Sched(std::vector<int> tune1_list) {
     }
     // merge 3 branches, generate mTuneLws.mMemoryBoundTune
     std::vector<std::vector<int>> mergedTree;
-    mergedTree = mergeSortTune2Config(branch1, branch2);
+    mergedTree = mergeSortTune2Config(branch0, branch1);
+    mergedTree = mergeSortTune2Config(mergedTree, branch2);
     mergedTree = mergeSortTune2Config(mergedTree, branch3);
     mTuneLws.mMemoryBoundTune.clear();
     for (auto& config: mergedTree) {
