@@ -24,7 +24,7 @@
 
 #define DECODE_TUNE1_PLANS 7
 #define DECODE_TUNE2_PLANS 10
-#define FLUCTUATION_TOLERANCE 2
+#define FLUCTUATION_TOLERANCE 1
 #define MAGIC_TOKEN 200
 
 #include "httplib.h"
@@ -460,7 +460,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             // tune1: 
             if (tune1) {
                 // tune1: compare time to decide finish or not
-                if (current_speed < last_speed || times==tuning_plans) {
+                if (current_speed < last_speed*(1+(float)FLUCTUATION_TOLERANCE/100) || times==tuning_plans) {
                     // found: last time best!
                     tune1_speed = last_speed;
                     if (speed_tolerance==0) { tune_end = true; } // no tolerance
