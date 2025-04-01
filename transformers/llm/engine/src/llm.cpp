@@ -483,11 +483,12 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                     }
                     if ((current_speed >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_speed) \
                         || (times==tuning_plans)) {
-                        // termination
+                        // finish all searches: termination
                         int best = tune2_list.size()-1;
                         float best_energy = tune2_list.back().second;
+                        float rectified_best_speed = (tune1_speed+current_speed)/2;
                         for (int i=0; i<tune2_list.size(); ++i) {
-                            if (tune2_list[i].first < (1-(float)(FLUCTUATION_TOLERANCE+speed_tolerance)/100)*tune1_speed) { continue; }
+                            if (tune2_list[i].first < (1-(float)(FLUCTUATION_TOLERANCE+speed_tolerance)/100)*rectified_best_speed) { continue; }
                             if (tune2_list[i].second < best_energy) {
                                 best_energy = tune2_list[i].second;
                                 best = i;
