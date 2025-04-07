@@ -1477,7 +1477,7 @@ static void _fillInfo(MNNCPUInfo* cpuinfo_isa) {
                 if (cpu_parts[prime_info.ids.front()] == cpu_parts[group.ids.front()])
                     { group.cpuType=CPUGroup::Prime; continue; }
             }
-            if ((((float)group.maxFreq >= 0.7*(float)prime_info.maxFreq) && ((float)group.capacity >= 0.5*(float)prime_info.capacity)) \
+            if ((((float)group.maxFreq >= 0.6*(float)prime_info.maxFreq) && ((float)group.capacity >= 0.4*(float)prime_info.capacity)) \
                 || ((float)group.minFreq > (float)lowesr_minFreq) && ((float)group.maxFreq > (float)lowest_maxFreq)) 
                 { group.cpuType=CPUGroup::Performance; continue; }
             group.cpuType=CPUGroup::Efficient;
