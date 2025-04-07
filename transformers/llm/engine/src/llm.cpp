@@ -443,6 +443,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
     static float tune1_speed = 0;
     static std::vector<std::pair<float,float>> tune2_list;
     static int tuning_times = decode_tune_times;
+    static int current_thread = 2;
 
     // decode backend tuning
     if (decode_config.type == MNN_FORWARD_CPU \
@@ -466,15 +467,32 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                     if (speed_tolerance==0) { tune_end = true; } // no tolerance
                     else { tune1 = false; tuning_times /= tune2_skip; } // finish tune1, start tune2 coarse tuning.
                     times = 0;
+                    current_thread--;
+                }
+                else {
+                    current_thread++;
                 }
                 last_speed = current_speed;
             } else {
                 // tune2: waiting for power registration
                 if (power == nullptr) {
                     // no power input, use heuristic.
-                    if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed || times==tuning_plans) {
+#ifdef __APPLE__
+                    if (current_thread==1) {
+                        // no less core is possible!
+                        tune_end = true;
+                    }
+                    if (current_speed < (1-(float)(FLUCTUATION_TOLERANCE+speed_tolerance)/100)*tune1_speed || times==tuning_plans) {
+                        tune_end = true; // founded
+                        current_thread++; // last one is okay
+                    } else {
+                        if (!tune_end) { current_thread--; } // reduce 1 more core!
+                    }
+#else
+                    if (current_speed >= (1-(float)(FLUCTUATION_TOLERANCE+speed_tolerance)/100)*tune1_speed || times==tuning_plans) {
                         tune_end = true; // founded
                     }
+#endif
                 } else {
                     tune2_list.push_back(std::make_pair(current_speed, (*power)*(1/current_speed)));
                     MNN_PRINT("Current energy: %.4f mJ\n", tune2_list.back().second);
@@ -502,11 +520,22 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
         } 
         else {
             // direct tuning, not waiting.
+#ifdef __APPLE__
+            tuneConfig.backendConfig->power = BackendConfig::Power_Normal;
+            decode_config.numThread = current_thread;
+            tuneConfig.numThread = current_thread;
+#else
             tuneConfig.backendConfig->power = (tune1) ? BackendConfig::Power_MemoryBoundTune1 : BackendConfig::Power_MemoryBoundTune2;
+#endif
             if (times < tuning_plans) {
                 // tune and measure time.
                 auto st     = std::chrono::system_clock::now();
+#ifdef __APPLE__
+                MNN_PRINT("decode core plan: %d\n", current_thread);
+                ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), current_thread);
+#else
                 ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), decode_config.numThread);
+#endif
                 for (int v = 0; v < decode_modules_.size(); ++v) {
                     decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &tuneConfig));
                 }
@@ -533,6 +562,18 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
 
         if (tune_end) {
             // tuning finished, reset decode_modules_ to Power_MemoryBound.
+#ifdef __APPLE__
+            tuneConfig.backendConfig->power = BackendConfig::Power_Normal;
+            decode_config.numThread = current_thread;
+            ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(tuneConfig.backendConfig), current_thread);
+            for (int v = 0; v < decode_modules_.size(); ++v) {
+                decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
+            }
+            tuned_config.clear();
+            tuned_config.push_back(current_thread);
+            // record CPU cores, the tuning results.
+            MNN_PRINT("CPU MemoryBound Core Number: %d\n", current_thread);
+#else
             ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
             for (int v = 0; v < decode_modules_.size(); ++v) {
                 decode_modules_[v].reset(Module::clone(decode_modules_[v].get(), &decode_config));
@@ -542,6 +583,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             MNN_PRINT("CPU MemoryBound Core Group: [");
             for (auto& cpuid : tuned_config) { MNN_PRINT("%d, ", cpuid);  }
             MNN_PRINT("]\n");
+#endif
             // reset all static var
             tune1 = true;
             wait_for_power = false;
@@ -550,6 +592,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             last_speed = 0;
             tune1_speed = 0;
             tune2_list.clear();
+            current_thread = 2;
         }
 
         // return tune_end indicator
