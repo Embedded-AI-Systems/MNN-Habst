@@ -10,7 +10,7 @@ class Embedding(torch.nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.embed = embed
-        if config.model_type == 'gemma2':
+        if config.model_type == 'gemma2' or config.model_type == 'gemma':
             normalizer = torch.tensor(self.hidden_size**0.5)
             self.embed.weight.data *= normalizer
 

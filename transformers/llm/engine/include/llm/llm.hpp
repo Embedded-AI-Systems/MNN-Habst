@@ -84,6 +84,7 @@ public:
     void eraseHistory(size_t begin, size_t end);
     void response(const std::string& user_content, std::ostream* os = &std::cout, const char* end_with = nullptr, int max_new_tokens = -1);
     void response(const std::vector<PromptItem>& chat_prompts, std::ostream* os = &std::cout, const char* end_with = nullptr, int max_new_tokens = -1);
+    void response(const std::vector<int>& input_ids, std::ostream* os, const char* end_with, int max_new_tokens);
     void generate_init(std::ostream* os = nullptr, const char* end_with = nullptr);
     void generate(int max_token);
     std::vector<int> generate(const std::vector<int>& input_ids, int max_new_tokens = -1);
