@@ -262,6 +262,18 @@ std::vector<int> Executor::RuntimeManager::getCPUCoreConfig() {
     return emptyVec;
 }
 
+float Executor::RuntimeManager::getEstimatedCPUPower() {
+    auto current = ExecutorScope::Current();
+    auto rt = current->getRuntime();
+    for (auto& iter : rt.first) {
+        if (iter.first == MNN_FORWARD_CPU) {
+            float power = iter.second->hint().powerEstimate;
+            if (power>=1000.) { return power; } // valid power
+        }
+    }
+    return 0.;
+}
+
 bool Executor::RuntimeManager::getInfo(Interpreter::SessionInfoCode code, void* ptr) {
     // Only support get memory
     switch (code) {

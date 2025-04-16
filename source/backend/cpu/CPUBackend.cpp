@@ -212,7 +212,10 @@ std::vector<int> CPURuntime::getTune1Sched(int numThread) const {
 }
 
 float CPURuntime::estimatePower(const std::vector<int>& config) const {
-    float sum = 0.;
+    // unit: mW
+    const float static_power = 1000.;
+    const float scale_factor = 200.;
+    float sum = static_power;
     auto cpuInfo = MNNGetCPUInfo();
     auto& groups = cpuInfo->groups;
     std::vector<int> groupSelect(groups.size(), 0);
@@ -233,7 +236,7 @@ float CPURuntime::estimatePower(const std::vector<int>& config) const {
         float powerFactor = 1.;
         if (groups[i].cpuType == CPUGroup::Performance) { powerFactor=(float)hint().performanceCorePowerScale/100; }
         if (groups[i].cpuType == CPUGroup::Efficient) { powerFactor=(float)hint().efficientCorePowerScale/100; }
-        sum += powerFactor * idleFactor * (groupFreq*groupFreq);
+        sum += scale_factor * powerFactor * idleFactor * (groupFreq*groupFreq);
     }
     return sum;
 }
@@ -441,6 +444,7 @@ void CPURuntime::_resetThreadPool() {
                 for (auto& id: mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second) { MNN_PRINT("%d ", id); }
                 MNN_PRINT("\n");
                 MNN_PRINT("extimated power: %.5f\n", estimatePower(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second));
+                mHint.powerEstimate = estimatePower(mTuneLws.mMemoryBoundTune[mTuneLws.currentTunePlan].second);
             }
             // Debug end
 

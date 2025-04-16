@@ -435,7 +435,8 @@ void Llm::trace(bool start) {
 
 bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int speed_tolerance) {
     const int tune2_skip = 1;
-    const float tune1_coef = 0.33;
+    const float tune1_coef = 0.5;
+    const float heuristic_coef = 0.2;
     static bool tune1 = true;
     static bool wait_for_power = false;
     static int times = 0;
@@ -495,8 +496,10 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                     }
 #endif
                 } else {
-                    tune2_list.push_back(std::make_pair(current_speed, (*power)*(1/current_speed)));
-                    MNN_PRINT("Current energy: %.4f mJ\n", tune2_list.back().second);
+                    float powerGT = (*power)*(1/current_speed);
+                    float powerEstimate = runtime_manager_->getEstimatedCPUPower()*(1/current_speed);
+                    tune2_list.push_back(std::make_pair(current_speed, (1-heuristic_coef)*powerGT + heuristic_coef*powerEstimate));
+                    MNN_PRINT("Current energy: %.4f mJ, rectified energy: %4f mJ\n", powerGT, tune2_list.back().second);
                     if (current_speed >= (1-(float)speed_tolerance/100)*tune1_speed) {
                         if (tuning_times<decode_tune_times) { tuning_times=decode_tune_times; } // tune2: coarse -> fine.
                     }

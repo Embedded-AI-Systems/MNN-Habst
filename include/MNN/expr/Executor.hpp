@@ -128,6 +128,7 @@ public:
         void setHint(Interpreter::HintMode mode, const std::vector<int>& value);
         void setHintPtr(Interpreter::HintMode mode, void* value);
         std::vector<int> getCPUCoreConfig();
+        float getEstimatedCPUPower();
         bool getInfo(Interpreter::SessionInfoCode code, void* ptr);
         BackendConfig* getBnConfig();
         const RuntimeAttr* getInside() const {

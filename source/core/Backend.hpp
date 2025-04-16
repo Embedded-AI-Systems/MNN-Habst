@@ -70,6 +70,9 @@ struct RuntimeHint {
 
     // CPU core config
     std::vector<int> cpuCoreConfig;
+
+    // get estimated power consumption
+    float powerEstimate = 0.;
 };
 /** abstract backend */
 class Backend : public NonCopyable {
