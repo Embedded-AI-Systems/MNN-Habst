@@ -435,7 +435,7 @@ void Llm::trace(bool start) {
 
 bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int speed_tolerance) {
     const int tune2_skip = 1;
-    const float tune1_coef = 0;
+    const float tune1_coef = 0.33;
     static bool tune1 = true;
     static bool wait_for_power = false;
     static int times = 0;
