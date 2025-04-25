@@ -448,13 +448,16 @@ void Llm::trace(bool start) {
 bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int speed_tolerance) {
     const int tune2_skip = 1;
     const float tune1_coef = 0.5;
-    const float heuristic_coef = 0.2;
+    const float heuristic_coef = 0.25;
     static bool tune1 = true;
     static bool wait_for_power = false;
     static int times = 0;
     static float last_speed = 0;
     static float current_speed = 0;
     static float tune1_speed = 0;
+    static float last_estimate = 0;
+    static float current_estimate = 0;
+    static float tune1_estimate = 0;
     static std::vector<std::pair<float,float>> tune2_list;
     static int tuning_times = decode_tune_times;
     static int current_thread = 2;
@@ -478,6 +481,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                 if (current_speed < last_speed*(1+(float)FLUCTUATION_TOLERANCE/100) || times==tuning_plans) {
                     // found: last time best!
                     tune1_speed = last_speed;
+                    tune1_estimate = last_estimate;
                     if (speed_tolerance==0) { tune_end = true; } // no tolerance
                     else { tune1 = false; tuning_times /= tune2_skip; } // finish tune1, start tune2 coarse tuning.
                     times = 0;
@@ -487,6 +491,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                     current_thread++;
                 }
                 last_speed = current_speed;
+                last_estimate = current_estimate;
             } else {
                 // tune2: waiting for power registration
                 if (power == nullptr) {
@@ -516,8 +521,9 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                         if (tuning_times<decode_tune_times) { tuning_times=decode_tune_times; } // tune2: coarse -> fine.
                     }
                     if ((current_speed >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_speed) \
-                        || (times==tuning_plans)) {
+                        || (times==tuning_plans) || (runtime_manager_->getEstimatedCPUPower() >= (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_estimate)) {
                         // finish all searches: termination
+                        MNN_PRINT("current power: %.2f, tune1_power: %.2f\n", runtime_manager_->getEstimatedCPUPower(), (1-(float)FLUCTUATION_TOLERANCE/100)*tune1_estimate);
                         int best = tune2_list.size()-1;
                         float best_energy = tune2_list.back().second;
                         float rectified_best_speed = tune1_speed*(tune1_coef)+current_speed*(1-tune1_coef);
@@ -565,6 +571,7 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
                 auto et      = std::chrono::system_clock::now();
                 auto current_time = std::chrono::duration_cast<std::chrono::milliseconds>(et - st).count();
                 current_speed = (tuning_times/(float)current_time)*1000;
+                current_estimate = runtime_manager_->getEstimatedCPUPower();
                 MNN_PRINT("Current Speed: %.1f tok/s\n", current_speed);
                 // clear dirty tuning kv history
                 setKVCacheInfo(0, getCurrentHistory());
@@ -608,6 +615,9 @@ bool Llm::decode_tuning(std::vector<int>& tuned_config, const float* power, int 
             current_speed = 0;
             last_speed = 0;
             tune1_speed = 0;
+            current_estimate = 0;
+            last_estimate = 0;
+            tune1_estimate = 0;
             tune2_list.clear();
             current_thread = 2;
         }

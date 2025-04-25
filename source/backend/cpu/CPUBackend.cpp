@@ -216,6 +216,7 @@ float CPURuntime::estimatePower(const std::vector<int>& config) const {
     const float static_power = 1000.;
     const float scale_factor = 200.;
     float sum = static_power;
+#ifdef MNN_USE_THREAD_POOL
     auto cpuInfo = MNNGetCPUInfo();
     auto& groups = cpuInfo->groups;
     std::vector<int> groupSelect(groups.size(), 0);
@@ -238,6 +239,7 @@ float CPURuntime::estimatePower(const std::vector<int>& config) const {
         if (groups[i].cpuType == CPUGroup::Efficient) { powerFactor=(float)hint().efficientCorePowerScale/100; }
         sum += scale_factor * powerFactor * idleFactor * (groupFreq*groupFreq);
     }
+#endif
     return sum;
 }
 
@@ -414,6 +416,7 @@ void CPURuntime::_resetThreadPool() {
             // The current tuning plan is mTuneLws.mMemoryBoundTune.back()
             mThreadNumber = mTuneLws.mMemoryBoundTune.back().first;
             mTuneLws.executed = false; // not executed.
+            mHint.powerEstimate = estimatePower(mTuneLws.mMemoryBoundTune.back().second);
         }
         if (mPower == BackendConfig::Power_MemoryBoundTune2) {
             if (mTuneLws.mMemoryBoundTune.empty()) {
