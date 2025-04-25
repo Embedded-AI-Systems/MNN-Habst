@@ -291,6 +291,11 @@ void Llm::init_runtime() {
     powerConfig = (config_->decode_power().empty()) \
         ? config_->power() : config_->decode_power();
     decode_config.backendConfig->power = power_mode_convert(powerConfig);
+    // setup backup config (default)
+    backup_config = decode_config;
+    backup_config.backendConfig = new BackendConfig(cpuBackendConfig);
+    backup_config.numThread = 4;
+    backup_config.backendConfig->power = BackendConfig::Power_Normal;
 
     runtime_manager_.reset(Executor::RuntimeManager::createRuntimeManager(prefill_config));
     runtime_manager_->setHint(MNN::Interpreter::MEM_ALLOCATOR_TYPE, 0);
@@ -365,6 +370,13 @@ void Llm::load() {
         decode_modules_[v].reset(Module::clone(modules_[v].get(), &decode_config));
     }
     MNN_PRINT("Clone Decode Module Done!\n");
+
+    ExecutorScope::Current()->setGlobalExecutorConfig(backup_config.type, *(backup_config.backendConfig), backup_config.numThread);
+    backup_modules_.resize(modules_.size());
+    for (int v = 0; v < modules_.size(); ++v) {
+        backup_modules_[v].reset(Module::clone(modules_[v].get(), &backup_config));
+    }
+    MNN_PRINT("Clone Backup Module Done!\n");
 
     prefill_modules_ = modules_;
 }
@@ -696,6 +708,9 @@ void Llm::tuning(TuneType type, std::vector<int> candidates){
     }
 }
 void Llm::switchMode(Llm::Stage stage) {
+    if (decode_config.backendConfig->power != BackendConfig::Power_MemoryBound && stage==Backup) {
+        stage = Decode; // no Backup for other power plans.
+    }
     switch (stage) {
         case Prefill:
             ExecutorScope::Current()->setGlobalExecutorConfig(prefill_config.type, *(prefill_config.backendConfig), prefill_config.numThread);
@@ -704,6 +719,10 @@ void Llm::switchMode(Llm::Stage stage) {
         case Decode:
             ExecutorScope::Current()->setGlobalExecutorConfig(decode_config.type, *(decode_config.backendConfig), decode_config.numThread);
             current_modules_ = decode_modules_;
+            break;
+        case Backup:
+            ExecutorScope::Current()->setGlobalExecutorConfig(backup_config.type, *(backup_config.backendConfig), backup_config.numThread);
+            current_modules_ = backup_modules_;
             break;
         default:
             break;
@@ -1016,6 +1035,7 @@ Llm::~Llm() {
     runtime_manager_.reset();
     if (prefill_config.backendConfig != nullptr) delete prefill_config.backendConfig;
     if (decode_config.backendConfig != nullptr) delete decode_config.backendConfig;
+    if (backup_config.backendConfig != nullptr) delete backup_config.backendConfig;
 }
 
 void Llm::print_speed() {

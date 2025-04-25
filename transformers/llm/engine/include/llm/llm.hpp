@@ -43,7 +43,8 @@ class MNN_PUBLIC Llm {
 public:
     enum Stage {
         Prefill,
-        Decode
+        Decode,
+        Backup // can switch to the back up module
     };
     struct GenerateState {
         // forward info
@@ -118,10 +119,10 @@ protected:
     std::shared_ptr<MNN::Express::Executor::RuntimeManager> runtime_manager_;
     std::shared_ptr<MNN::Express::Executor::RuntimeManager> mllm_runtime_manager_;
     std::vector<std::shared_ptr<MNN::Express::Module>> modules_;
-    std::vector<std::shared_ptr<MNN::Express::Module>> prefill_modules_, decode_modules_, current_modules_;
+    std::vector<std::shared_ptr<MNN::Express::Module>> prefill_modules_, decode_modules_, backup_modules_, current_modules_;
     const MNN::Express::Module* base_module_ = nullptr;
     void init_runtime();
-    ScheduleConfig prefill_config, decode_config;
+    ScheduleConfig prefill_config, decode_config, backup_config;
     virtual MNN::Express::VARP gen_position_ids(int seq_len);
     bool mTracing = false;
     GenerateState mState;
